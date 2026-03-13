@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PACKING FLOW - 包裝部產值系統</title>
+    <title>PACKING FLOW - 包裝部產值系統 PRO</title>
     
     <!-- 1. 核心引擎 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -48,6 +48,10 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
+        const { 
+            BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+            AreaChart, Area, ReferenceLine, Cell, LabelList 
+        } = window.Recharts || {};
 
         // Firebase 專屬配置
         const firebaseConfig = {
@@ -63,7 +67,8 @@
             const paths = {
                 chart: "M18 20V10M12 20V4M6 20v-6",
                 settings: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.72V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.72V4a2 2 0 0 0-2-2z",
-                plus: "M12 5v14M5 12h14"
+                plus: "M12 5v14M5 12h14",
+                package: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
             };
             return (
                 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline-block'}}>
@@ -74,19 +79,15 @@
         };
 
         const App = () => {
-            const { 
-                BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-                AreaChart, Area, ReferenceLine, Cell 
-            } = window.Recharts || {};
-
             const [activeTab, setActiveTab] = useState('record');
             const [records, setRecords] = useState([]);
             const [config, setConfig] = useState({
-                machines: ['凱炫機', '自動包裝機', '立式機'],
-                leaders: ['組長A', '組長B'],
-                flavors: ['原味', '巧克力', '芝麻']
+                machines: ['凱炫機'],
+                leaders: ['組長A'],
+                products: [], // 格式: { name, category, target }
+                categories: ['塑膠內襯', '鐵盒類', '大餅類']
             });
-            const [filter, setFilter] = useState({ machine: '全部', leader: '全部', flavor: '全部' });
+            const [filter, setFilter] = useState({ machine: '全部', leader: '全部', category: '全部', flavor: '全部' });
             
             const [form, setForm] = useState({
                 date: new Date().toISOString().split('T')[0],
@@ -108,14 +109,13 @@
                         db.doc(configPath).onSnapshot(doc => {
                             if (doc.exists) {
                                 const data = doc.data();
-                                setConfig(data);
-                                // 修正：只有在第一次載入時且表單是空的時候才填入預設值
+                                setConfig(prev => ({ ...prev, ...data }));
                                 if (!initialLoadDone.current) {
                                     setForm(f => ({
                                         ...f,
                                         machine: data.machines?.[0] || '',
                                         leader: data.leaders?.[0] || '',
-                                        flavor: data.flavors?.[0] || ''
+                                        flavor: data.products?.[0]?.name || ''
                                     }));
                                     initialLoadDone.current = true;
                                 }
@@ -126,15 +126,8 @@
 
                         db.collection(recordsPath).onSnapshot(snap => {
                             const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                            // 修正：絕對時間排序
-                            setRecords(data.sort((a,b) => {
-                                const valA = a.date + (a.createdAt || "");
-                                const valB = b.date + (b.createdAt || "");
-                                return valB.localeCompare(valA);
-                            }));
-                            
-                            const loader = document.getElementById('system-loader');
-                            if (loader) loader.style.display = 'none';
+                            setRecords(data.sort((a,b) => (b.date + (b.createdAt || "")).localeCompare(a.date + (a.createdAt || ""))));
+                            document.getElementById('system-loader').style.display = 'none';
                         });
                     });
                 } catch (e) { console.error(e); }
@@ -150,17 +143,17 @@
                 const totalMin = (dur + Number(form.prep)) * form.count;
                 const upph = totalMin > 0 ? Math.round((form.total / totalMin) * 60) : 0;
 
+                // 自動帶入類別
+                const productInfo = config.products.find(p => p.name === form.flavor);
+                const category = productInfo ? productInfo.category : '未分類';
+
                 try {
                     const db = firebase.firestore();
                     await db.collection(`artifacts/${appId}/public/data/production_records`).add({
-                        ...form, 
-                        duration: dur, 
-                        upph, 
-                        createdAt: new Date().toISOString()
+                        ...form, duration: dur, upph, category, createdAt: new Date().toISOString()
                     });
-                    // 只重置產量，保留機台、組長、口味，方便下一筆輸入
                     setForm(f => ({ ...f, total: 0 }));
-                    alert("✅ 數據已存入雲端！");
+                    alert("✅ 紀錄成功！");
                 } catch (err) { alert("儲存失敗：" + err.message); }
             };
 
@@ -168,6 +161,7 @@
                 const filtered = records.filter(r => 
                     (filter.machine === '全部' || r.machine === filter.machine) && 
                     (filter.leader === '全部' || r.leader === filter.leader) &&
+                    (filter.category === '全部' || r.category === filter.category) &&
                     (filter.flavor === '全部' || r.flavor === filter.flavor)
                 );
 
@@ -184,14 +178,25 @@
                     leadMap[l].sum += (Number(r.upph) || 0); leadMap[l].count++;
                 });
 
+                // 計算當前選擇產品的標準 UPPH (作為報表紅線)
+                let targetLine = 300;
+                if (filter.flavor !== '全部') {
+                    const prod = config.products.find(p => p.name === filter.flavor);
+                    if (prod) targetLine = Number(prod.target);
+                }
+
                 return {
                     trend: Object.keys(daily).sort().map(d => ({ date: d.slice(5), upph: Math.round(daily[d].sum/daily[d].count) })),
                     flavs: Object.values(flavMap).map(f => ({ name: f.name, upph: Math.round(f.sum/f.count) })).sort((a,b)=>b.upph-a.upph),
                     leads: Object.values(leadMap).map(l => ({ name: l.name, upph: Math.round(l.sum/l.count) })),
                     avg: filtered.length ? Math.round(filtered.reduce((a,c)=>a+(Number(c.upph)||0),0)/filtered.length) : 0,
-                    count: filtered.length
+                    count: filtered.length,
+                    targetLine
                 };
-            }, [records, filter]);
+            }, [records, filter, config.products]);
+
+            // 輔助函式：點擊選取輸入內容 (解決無法按刪除的問題)
+            const handleFocus = (e) => e.target.select();
 
             return (
                 <div className="min-h-screen">
@@ -217,21 +222,26 @@
                                             <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">機台</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.machine} onChange={e=>setForm({...form, machine:e.target.value})}>{config.machines.map(m=><option key={m} value={m}>{m}</option>)}</select></div>
                                             <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">組長</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.leader} onChange={e=>setForm({...form, leader:e.target.value})}>{config.leaders.map(l=><option key={l} value={l}>{l}</option>)}</select></div>
                                         </div>
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">品項口味</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.flavor} onChange={e=>setForm({...form, flavor:e.target.value})}>{config.flavors.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">品項口味</label>
+                                            <select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.flavor} onChange={e=>setForm({...form, flavor:e.target.value})}>
+                                                {config.products.map(p=><option key={p.name} value={p.name}>{p.name} ({p.category})</option>)}
+                                            </select>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white shadow-inner">
                                             <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.start} onChange={e=>setForm({...form, start:e.target.value})}/></div>
                                             <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.end} onChange={e=>setForm({...form, end:e.target.value})}/></div>
                                         </div>
                                         <div className="grid grid-cols-3 gap-2">
-                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">人數</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.count} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
-                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">前置</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.prep} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
-                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">產量</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.total} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">人數</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.count} onFocus={handleFocus} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">前置</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.prep} onFocus={handleFocus} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">產量</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.total} onFocus={handleFocus} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
                                         </div>
                                         <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-all hover:bg-indigo-700 uppercase tracking-widest">儲存生產數據</button>
                                     </form>
                                 </div>
                                 <div className="lg:col-span-8 space-y-4">
-                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic underline decoration-indigo-500 underline-offset-8">Production History (Latest First)</h2>
+                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic underline decoration-indigo-500 underline-offset-8">Production Logs</h2>
                                     <div className="space-y-2 max-h-[650px] overflow-y-auto pr-2 custom-scrollbar">
                                         {records.map(r => (
                                             <div key={r.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between group shadow-sm hover:border-indigo-300 transition-all">
@@ -241,14 +251,13 @@
                                                         <span className="text-[7px] uppercase font-bold">UPPH</span>
                                                     </div>
                                                     <div>
-                                                        <div className="font-bold text-slate-800 uppercase">{r.machine} <span className="text-slate-300 mx-1">/</span> {r.flavor}</div>
+                                                        <div className="font-bold text-slate-800 uppercase">{r.machine} <span className="text-slate-300 mx-1">/</span> {r.flavor} <span className="ml-2 text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500">{r.category}</span></div>
                                                         <div className="text-[10px] text-slate-400 font-bold uppercase">{r.date} · <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{r.leader}</span> · {r.count}人 · {r.duration}分</div>
                                                     </div>
                                                 </div>
                                                 <button onClick={()=>firebase.firestore().doc(`artifacts/${appId}/public/data/production_records/${r.id}`).delete()} className="text-rose-400 font-bold text-[10px] px-3 opacity-0 group-hover:opacity-100 transition-all uppercase border border-rose-100 rounded-lg py-1">Delete</button>
                                             </div>
                                         ))}
-                                        {records.length === 0 && <div className="text-center py-20 text-slate-300 italic font-bold">尚未讀取到雲端數據...</div>}
                                     </div>
                                 </div>
                             </div>
@@ -259,54 +268,46 @@
                                 <div className="bg-white p-6 rounded-3xl border flex flex-col lg:flex-row justify-between items-center gap-6 shadow-sm">
                                     <div className="flex flex-wrap gap-3">
                                         <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">類別</span>
+                                            <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.category} onChange={e=>setFilter({...filter, category:e.target.value})}>
+                                                <option value="全部">全部類別</option>
+                                                {config.categories.map(c=><option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1 border-l pl-3">
                                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">機台</span>
                                             <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.machine} onChange={e=>setFilter({...filter, machine:e.target.value})}>
                                                 <option value="全部">全部機台</option>
                                                 {config.machines.map(m=><option key={m} value={m}>{m}</option>)}
                                             </select>
                                         </div>
-                                        <div className="flex flex-col gap-1">
+                                        <div className="flex flex-col gap-1 border-l pl-3">
                                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">組長</span>
                                             <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.leader} onChange={e=>setFilter({...filter, leader:e.target.value})}>
                                                 <option value="全部">全部組長</option>
                                                 {config.leaders.map(l=><option key={l} value={l}>{l}</option>)}
                                             </select>
                                         </div>
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">口味</span>
-                                            <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.flavor} onChange={e=>setFilter({...filter, flavor:e.target.value})}>
-                                                <option value="全部">全部口味</option>
-                                                {config.flavors.map(f=><option key={f} value={f}>{f}</option>)}
-                                            </select>
-                                        </div>
                                     </div>
-                                    <div className="text-right flex items-center gap-6">
-                                        <div className="text-center">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">樣本數</div>
-                                            <div className="text-2xl font-black">{stats.count}</div>
-                                        </div>
-                                        <div className="text-right border-l pl-6">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">篩選平均產值</div>
-                                            <div className={`text-4xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg} <span className="text-xs font-normal opacity-40 font-sans">UPPH</span></div>
-                                        </div>
+                                    <div className="text-right border-l pl-6">
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">平均人均小時產值 (UPPH)</div>
+                                        <div className={`text-5xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg}</div>
                                     </div>
                                 </div>
 
                                 <div className="bg-white p-8 rounded-3xl border h-80 shadow-sm">
                                     <h3 className="font-black text-slate-400 text-[10px] mb-4 uppercase tracking-widest italic flex items-center gap-2"><Icon name="chart" size={14}/> Productivity Trend</h3>
                                     <div className="h-64 w-full">
-                                        {stats.trend.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <AreaChart data={stats.trend}>
-                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                                    <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
-                                                    <YAxis fontSize={10} axisLine={false} tickLine={false} />
-                                                    <Tooltip contentStyle={{borderRadius:'12px', border:'none', boxShadow:'0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-                                                    <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" label={{value:'目標', position:'right', fill:'#fb7185', fontSize:10}} />
-                                                    <Area type="monotone" dataKey="upph" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={4} />
-                                                </AreaChart>
-                                            </ResponsiveContainer>
-                                        ) : <div className="flex items-center justify-center h-full text-slate-300 font-bold italic">該條件下尚無數據紀錄</div>}
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={stats.trend}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
+                                                <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                                                <Tooltip contentStyle={{borderRadius:'12px', border:'none', boxShadow:'0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                                                <ReferenceLine y={stats.targetLine} stroke="#fb7185" strokeDasharray="5 5" label={{value:`標準: ${stats.targetLine}`, position:'right', fill:'#fb7185', fontSize:10, fontWeight:'bold'}} />
+                                                <Area type="monotone" dataKey="upph" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={4} />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
                                     </div>
                                 </div>
 
@@ -328,8 +329,11 @@
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <BarChart data={stats.leads}>
                                                     <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
+                                                    <Tooltip cursor={{fill: '#f8fafc'}} />
                                                     <Bar dataKey="upph" radius={[6, 6, 0, 0]} barSize={30}>
                                                         {stats.leads.map((e, i) => <Cell key={i} fill={e.upph>=300?'#6366f1':'#fb7185'} />)}
+                                                        {/* 修正：顯示柱狀圖上的數字 */}
+                                                        <LabelList dataKey="upph" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#64748b' }} />
                                                     </Bar>
                                                 </BarChart>
                                             </ResponsiveContainer>
@@ -340,39 +344,101 @@
                         )}
 
                         {activeTab === 'settings' && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-right-4">
-                                {['machines', 'leaders', 'flavors'].map(type => (
-                                    <div key={type} className="bg-white p-6 rounded-3xl border shadow-sm">
-                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="settings" size={14} /> {type==='machines'?'機台名單':type==='leaders'?'組長名單':'產品口味'}</h3>
-                                        <div className="flex gap-2 mb-4">
-                                            <input type="text" id={`in-${type}`} className="flex-1 p-3 bg-slate-50 border rounded-xl font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" placeholder="新增名稱..." onKeyDown={(e)=>e.key==='Enter' && document.getElementById(`btn-${type}`).click()} />
-                                            <button id={`btn-${type}`} onClick={() => {
-                                                const el = document.getElementById(`in-${type}`);
-                                                if(el && el.value) {
-                                                    const newC = { ...config, [type]: [...config[type], el.value.trim()] };
-                                                    firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC).then(()=>el.value='');
-                                                }
-                                            }} className="bg-indigo-600 text-white w-12 h-12 rounded-xl font-bold shadow-lg hover:bg-indigo-700">+</button>
-                                        </div>
-                                        <div className="space-y-2 h-64 overflow-y-auto pr-1 custom-scrollbar text-sm font-bold text-slate-700">
-                                            {config[type].map(item => (
-                                                <div key={item} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group">
-                                                    <span>{item}</span>
-                                                    <button onClick={() => {
-                                                        const newC = { ...config, [type]: config[type].filter(i=>i!==item) };
-                                                        firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                                    }} className="text-rose-400 opacity-0 group-hover:opacity-100 transition-all px-2 font-black">×</button>
-                                                </div>
-                                            ))}
-                                        </div>
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in slide-in-from-right-4">
+                                <div className="lg:col-span-4 space-y-6">
+                                    <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest">機台名單</h3>
+                                        <SettingsInput type="machines" onAdd={(val)=> {
+                                            const newC = { ...config, machines: [...config.machines, val] };
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                        }} />
+                                        <ListDisplay items={config.machines} onRemove={(item)=>{
+                                            const newC = { ...config, machines: config.machines.filter(i=>i!==item) };
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                        }} />
                                     </div>
-                                ))}
+                                    <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest">組長名單</h3>
+                                        <SettingsInput type="leaders" onAdd={(val)=> {
+                                            const newC = { ...config, leaders: [...config.leaders, val] };
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                        }} />
+                                        <ListDisplay items={config.leaders} onRemove={(item)=>{
+                                            const newC = { ...config, leaders: config.leaders.filter(i=>i!==item) };
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                        }} />
+                                    </div>
+                                </div>
+
+                                <div className="lg:col-span-8 bg-white p-6 rounded-3xl border shadow-sm h-fit">
+                                    <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="package" size={14}/> 產品管理與標準 UPPH</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-6 bg-slate-50 p-4 rounded-2xl border-2 border-dashed">
+                                        <div className="md:col-span-1"><label className="text-[10px] font-bold text-slate-400">產品名稱</label><input id="p-name" className="w-full p-2 rounded-lg border font-bold" placeholder="例: 巧巧酥"/></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400">類別</label><select id="p-cat" className="w-full p-2 rounded-lg border font-bold">{config.categories.map(c=><option key={c}>{c}</option>)}</select></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400">標準 UPPH</label><input id="p-target" type="number" className="w-full p-2 rounded-lg border font-bold" defaultValue="300"/></div>
+                                        <div className="flex items-end"><button onClick={()=>{
+                                            const n = document.getElementById('p-name');
+                                            const c = document.getElementById('p-cat');
+                                            const t = document.getElementById('p-target');
+                                            if(n.value) {
+                                                const newP = { name: n.value, category: c.value, target: Number(t.value) };
+                                                const newC = { ...config, products: [...config.products, newP] };
+                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                                n.value = '';
+                                            }
+                                        }} className="w-full bg-indigo-600 text-white p-2.5 rounded-lg font-bold">新增產品</button></div>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm text-left">
+                                            <thead><tr className="text-slate-400 border-b"><th className="pb-2">品項名稱</th><th className="pb-2">類別</th><th className="pb-2 text-center">標準 UPPH</th><th className="pb-2 text-right">操作</th></tr></thead>
+                                            <tbody>
+                                                {config.products.map((p, idx) => (
+                                                    <tr key={idx} className="border-b last:border-0">
+                                                        <td className="py-3 font-bold">{p.name}</td>
+                                                        <td><span className="bg-slate-100 px-2 py-0.5 rounded text-xs">{p.category}</span></td>
+                                                        <td className="text-center font-mono font-bold text-indigo-600">{p.target}</td>
+                                                        <td className="text-right">
+                                                            <button onClick={()=>{
+                                                                const newC = { ...config, products: config.products.filter((_, i)=>i!==idx) };
+                                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                                            }} className="text-rose-400 font-bold px-2">×</button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
                         )}
                     </div>
                 </div>
             );
         };
+
+        // 獨立組件：解決輸入法打字中斷問題
+        const SettingsInput = ({ type, onAdd }) => {
+            const [val, setVal] = useState('');
+            return (
+                <div className="flex gap-2 mb-4">
+                    <input type="text" className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold outline-none" placeholder="輸入..." value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{
+                        if(e.key==='Enter' && val) { onAdd(val.trim()); setVal(''); }
+                    }} />
+                    <button onClick={() => { if(val){ onAdd(val.trim()); setVal(''); } }} className="bg-indigo-600 text-white w-8 h-8 rounded-lg font-bold">+</button>
+                </div>
+            );
+        };
+
+        const ListDisplay = ({ items, onRemove }) => (
+            <div className="space-y-2 h-40 overflow-y-auto pr-1 custom-scrollbar text-sm font-bold text-slate-700">
+                {items.map(item => (
+                    <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl border border-slate-100">
+                        <span>{item}</span>
+                        <button onClick={() => onRemove(item)} className="text-rose-400 px-2">×</button>
+                    </div>
+                ))}
+            </div>
+        );
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
