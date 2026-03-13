@@ -13,7 +13,18 @@ import {
 } from 'lucide-react';
 
 // --- Firebase 初始化配置 ---
-const firebaseConfig = JSON.parse(__firebase_config);
+// 優先使用環境變數，若無則使用使用者提供的正式專案配置
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
+      authDomain: "packaging-7427b.firebaseapp.com",
+      projectId: "packaging-7427b",
+      storageBucket: "packaging-7427b.firebasestorage.app",
+      messagingSenderId: "1058360680341",
+      appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
+    };
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -474,6 +485,30 @@ const App = () => {
       </main>
     </div>
   );
+};
+
+const ConfigSection = ({ title, type, items, icon: Icon, addConfigItem, removeConfigItem }) => {
+    const [input, setInput] = useState('');
+    return (
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div className="flex items-center gap-2 mb-4">
+          <Icon className="text-indigo-500" size={20} />
+          <h3 className="font-bold text-lg">{title}</h3>
+        </div>
+        <div className="flex gap-2 mb-4">
+          <input type="text" className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" placeholder={`新增${title}...`} value={input} onChange={(e) => setInput(e.target.value)} />
+          <button onClick={() => { addConfigItem(type, input); setInput(''); }} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition-colors"><Plus size={20} /></button>
+        </div>
+        <div className="space-y-2 h-48 overflow-y-auto pr-1">
+          {items.map(item => (
+            <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg group">
+              <span className="text-slate-700 text-sm">{item}</span>
+              <button onClick={() => removeConfigItem(type, item)} className="text-slate-300 hover:text-rose-500 transition-colors"><X size={16} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
 };
 
 export default App;
