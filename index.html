@@ -1,33 +1,58 @@
-
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>包裝部人均產值即時系統 - PACKING FLOW</title>
-    <!-- 載入必要的外掛引擎 -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 1. 核心引擎：React 與 Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- 2. UI 樣式與圖標 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
 
-    <!-- Firebase SDK -->
+    <!-- 3. Firebase 雲端資料庫 (使用 Compat 版本確保相容性) -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', "Microsoft JhengHei", sans-serif; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .loading-screen {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #0f172a;
+            color: white;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="bg-slate-50">
-    <div id="root"></div>
+    <div id="root">
+        <!-- 初始載入畫面 -->
+        <div class="loading-screen">
+            <div class="spinner"></div>
+            <p class="mt-4 font-bold tracking-widest">系統初始化中...</p>
+        </div>
+    </div>
 
+    <!-- 核心程式邏輯 -->
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
         const { 
@@ -35,7 +60,7 @@
             AreaChart, Area, ReferenceLine, Cell 
         } = Recharts;
 
-        // --- Firebase 專屬配置 ---
+        // Firebase 配置 (您的專案)
         const firebaseConfig = {
             apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
             authDomain: "packaging-7427b.firebaseapp.com",
@@ -45,8 +70,10 @@
             appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
         };
 
-        // 初始化 Firebase
-        firebase.initializeApp(firebaseConfig);
+        // 初始化
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
         const auth = firebase.auth();
         const db = firebase.firestore();
         const appId = "packaging-productivity-app";
@@ -55,93 +82,70 @@
             const [user, setUser] = useState(null);
             const [activeTab, setActiveTab] = useState('record');
             const [loading, setLoading] = useState(true);
-            const [syncStatus, setSyncStatus] = useState('connecting');
-            
             const [config, setConfig] = useState({
                 machines: ['凱炫機', '自動包裝機', '立式機'],
                 leaders: ['組長A', '組長B', '組長C'],
                 flavors: ['巧巧酥', '原味蛋捲', '芝麻餅乾']
             });
-
             const [records, setRecords] = useState([]);
             const [dashboardFilter, setDashboardFilter] = useState({ machine: '全部', leader: '全部' });
-            
             const [formData, setFormData] = useState({
                 date: new Date().toISOString().split('T')[0],
                 machine: '', leader: '', flavor: '', staffCount: 3,
                 startTime: '08:00', endTime: '12:00', prepTime: 10, totalUnits: 0
             });
 
-            // 初始化驗證
+            // 1. 登入
             useEffect(() => {
-                auth.signInAnonymously()
-                    .then(() => setSyncStatus('synced'))
-                    .catch(err => setSyncStatus('error'));
-
-                const unsubscribe = auth.onAuthStateChanged((u) => {
+                auth.signInAnonymously().catch(console.error);
+                return auth.onAuthStateChanged(u => {
                     setUser(u);
                     setLoading(false);
                 });
-                return () => unsubscribe();
             }, []);
 
-            // 資料同步
+            // 2. 資料同步
             useEffect(() => {
                 if (!user) return;
-
-                const recordsPath = `artifacts/${appId}/public/data/production_records`;
-                const unsubscribeRecords = db.collection(recordsPath)
-                    .onSnapshot((snapshot) => {
-                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setRecords(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
-                        setSyncStatus('synced');
-                    }, () => setSyncStatus('error'));
-
                 const configPath = `artifacts/${appId}/public/data/system_config`;
-                const unsubscribeConfig = db.doc(configPath)
-                    .onSnapshot((docSnap) => {
-                        if (docSnap.exists) {
-                            setConfig(docSnap.data());
-                        } else {
-                            db.doc(configPath).set(config);
-                        }
-                    });
+                const recordsPath = `artifacts/${appId}/public/data/production_records`;
 
-                return () => {
-                    unsubscribeRecords();
-                    unsubscribeConfig();
-                };
+                const unsubConfig = db.doc(configPath).onSnapshot(doc => {
+                    if (doc.exists) setConfig(doc.data());
+                    else db.doc(configPath).set(config);
+                });
+
+                const unsubRecords = db.collection(recordsPath).onSnapshot(snap => {
+                    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setRecords(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
+                });
+
+                return () => { unsubConfig(); unsubRecords(); };
             }, [user]);
 
+            // 表單預設值
             useEffect(() => {
                 if (config.machines.length > 0) {
-                    setFormData(prev => ({
-                        ...prev,
-                        machine: prev.machine || config.machines[0],
-                        leader: prev.leader || config.leaders[0],
-                        flavor: prev.flavor || config.flavors[0]
+                    setFormData(p => ({
+                        ...p,
+                        machine: p.machine || config.machines[0],
+                        leader: p.leader || config.leaders[0],
+                        flavor: p.flavor || config.flavors[0]
                     }));
                 }
             }, [config]);
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!user || formData.totalUnits <= 0) return;
-
+                if (formData.totalUnits <= 0) return;
                 const [h1, m1] = formData.startTime.split(':').map(Number);
                 const [h2, m2] = formData.endTime.split(':').map(Number);
-                let duration = (h2 * 60 + m2) - (h1 * 60 + m1);
-                if (duration < 0) duration += 1440;
-
-                const totalWorkMinutes = (duration + Number(formData.prepTime)) * formData.staffCount;
-                const upph = totalWorkMinutes > 0 ? Math.round((formData.totalUnits / totalWorkMinutes) * 60) : 0;
-
-                const recordData = { ...formData, duration, upph, createdAt: new Date().toISOString() };
-                
-                try {
-                    await db.collection(`artifacts/${appId}/public/data/production_records`).add(recordData);
-                    setFormData(prev => ({ ...prev, totalUnits: 0 }));
-                } catch (err) { console.error(err); }
+                let dur = (h2 * 60 + m2) - (h1 * 60 + m1);
+                if (dur < 0) dur += 1440;
+                const totalMin = (dur + Number(formData.prepTime)) * formData.staffCount;
+                const upph = totalMin > 0 ? Math.round((formData.totalUnits / totalMin) * 60) : 0;
+                await db.collection(`artifacts/${appId}/public/data/production_records`).add({ ...formData, duration: dur, upph });
+                setFormData(p => ({ ...p, totalUnits: 0 }));
             };
 
             const stats = useMemo(() => {
@@ -149,46 +153,35 @@
                     (dashboardFilter.machine === '全部' || r.machine === dashboardFilter.machine) &&
                     (dashboardFilter.leader === '全部' || r.leader === dashboardFilter.leader)
                 );
-
-                const dailyMap = {}; const flavorMap = {}; const leaderMap = {};
-
+                const daily = {}; const flav = {}; const lead = {};
                 filtered.forEach(r => {
-                    if (!dailyMap[r.date]) dailyMap[r.date] = { totalUPPH: 0, count: 0 };
-                    dailyMap[r.date].totalUPPH += (r.upph || 0);
-                    dailyMap[r.date].count += 1;
-
-                    if (!flavorMap[r.flavor]) flavorMap[r.flavor] = { name: r.flavor, totalUPPH: 0, count: 0 };
-                    flavorMap[r.flavor].totalUPPH += (r.upph || 0);
-                    flavorMap[r.flavor].count += 1;
-
-                    if (!leaderMap[r.leader]) leaderMap[r.leader] = { name: r.leader, totalUPPH: 0, count: 0 };
-                    leaderMap[r.leader].totalUPPH += (r.upph || 0);
-                    leaderMap[r.leader].count += 1;
+                    if (!daily[r.date]) daily[r.date] = { sum: 0, count: 0 };
+                    daily[r.date].sum += r.upph; daily[r.date].count++;
+                    if (!flav[r.flavor]) flav[r.flavor] = { name: r.flavor, sum: 0, count: 0 };
+                    flav[r.flavor].sum += r.upph; flav[r.flavor].count++;
+                    if (!lead[r.leader]) lead[r.leader] = { name: r.leader, sum: 0, count: 0 };
+                    lead[r.leader].sum += r.upph; lead[r.leader].count++;
                 });
-
                 return {
-                    trendData: Object.keys(dailyMap).sort().map(d => ({ date: d.slice(5), avgUPPH: Math.round(dailyMap[d].totalUPPH / dailyMap[d].count) })),
-                    flavorData: Object.values(flavorMap).sort((a,b) => b.avgUPPH - a.avgUPPH),
-                    leaderData: Object.values(leaderMap).map(l => ({ name: l.name, avgUPPH: Math.round(l.totalUPPH / l.count) })),
-                    avgCurrent: filtered.length > 0 ? Math.round(filtered.reduce((acc, c) => acc + (c.upph || 0), 0) / filtered.length) : 0,
-                    totalCount: filtered.length
+                    trend: Object.keys(daily).sort().map(d => ({ date: d.slice(5), avg: Math.round(daily[d].sum/daily[d].count) })),
+                    flavor: Object.values(flav).map(f => ({ name: f.name, avg: Math.round(f.sum/f.count) })).sort((a,b)=>b.avg-a.avg),
+                    leader: Object.values(lead).map(l => ({ name: l.name, avg: Math.round(l.sum/l.count) })),
+                    avg: filtered.length ? Math.round(filtered.reduce((a,c)=>a+c.upph,0)/filtered.length) : 0,
+                    count: filtered.length
                 };
             }, [records, dashboardFilter]);
 
-            if (loading) return <div className="h-screen flex items-center justify-center bg-slate-900 text-white font-bold">連線雲端中...</div>;
+            if (loading) return null;
 
             return (
-                <div className="min-h-screen pb-20">
-                    <header className="bg-slate-900 text-white p-4 shadow-xl sticky top-0 z-20">
-                        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-                            <h1 className="text-xl font-black italic tracking-tighter flex items-center gap-2">
-                                <div className="bg-indigo-600 p-1 rounded font-normal not-italic">PF</div> PACKING FLOW
-                                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30 uppercase not-italic ml-2">Cloud Synced</span>
-                            </h1>
-                            <nav className="flex gap-1 bg-slate-800 p-1 rounded-xl">
-                                <button onClick={() => setActiveTab('record')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab === 'record' ? 'bg-indigo-600' : 'text-slate-400'}`}>錄入數據</button>
-                                <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab === 'dashboard' ? 'bg-indigo-600' : 'text-slate-400'}`}>分析報表</button>
-                                <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab === 'settings' ? 'bg-indigo-600' : 'text-slate-400'}`}>系統設定</button>
+                <div className="min-h-screen">
+                    <header className="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-xl">
+                        <div className="max-w-7xl mx-auto flex justify-between items-center">
+                            <h1 className="text-xl font-black italic tracking-tighter">PACKING FLOW <span className="text-indigo-400 text-xs not-italic font-normal">v2.1</span></h1>
+                            <nav className="flex gap-2 bg-slate-800 p-1 rounded-xl">
+                                <button onClick={()=>setActiveTab('record')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab==='record'?'bg-indigo-600':'text-slate-400'}`}>數據錄入</button>
+                                <button onClick={()=>setActiveTab('dashboard')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab==='dashboard'?'bg-indigo-600':'text-slate-400'}`}>效率報表</button>
+                                <button onClick={()=>setActiveTab('settings')} className={`px-4 py-2 rounded-lg text-sm font-bold ${activeTab==='settings'?'bg-indigo-600':'text-slate-400'}`}>系統設定</button>
                             </nav>
                         </div>
                     </header>
@@ -196,45 +189,45 @@
                     <main className="max-w-7xl mx-auto p-4 md:p-8">
                         {activeTab === 'record' && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                                <div className="lg:col-span-5">
-                                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-                                        <h2 className="text-lg font-black mb-6 text-indigo-700 uppercase italic tracking-tighter">New Log +</h2>
-                                        <form onSubmit={handleSubmit} className="space-y-4">
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">生產日期</label><input type="date" className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
-                                                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">機台</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.machine} onChange={e => setFormData({...formData, machine: e.target.value})}>{config.machines.map(m => <option key={m}>{m}</option>)}</select></div>
-                                                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">組長</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.leader} onChange={e => setFormData({...formData, leader: e.target.value})}>{config.leaders.map(l => <option key={l}>{l}</option>)}</select></div>
-                                            </div>
-                                            <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">產品口味</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.flavor} onChange={e => setFormData({...formData, flavor: e.target.value})}>{config.flavors.map(f => <option key={f}>{f}</option>)}</select></div>
-                                            <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white">
-                                                <div><label className="text-[10px] opacity-50 block">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-lg outline-none" value={formData.startTime} onChange={e => setFormData({...formData, startTime: e.target.value})} /></div>
-                                                <div><label className="text-[10px] opacity-50 block">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-lg outline-none" value={formData.endTime} onChange={e => setFormData({...formData, endTime: e.target.value})} /></div>
-                                            </div>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1">人數</label><input type="number" className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.staffCount} onChange={e => setFormData({...formData, staffCount: Number(e.target.value)})} /></div>
-                                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1">前置(分)</label><input type="number" className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.prepTime} onChange={e => setFormData({...formData, prepTime: Number(e.target.value)})} /></div>
-                                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1">產量(顆)</label><input type="number" className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.totalUnits} onChange={e => setFormData({...formData, totalUnits: Number(e.target.value)})} /></div>
-                                            </div>
-                                            <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-all">儲存數據至雲端</button>
-                                        </form>
-                                    </div>
+                                <div className="lg:col-span-5 bg-white p-6 rounded-3xl border shadow-sm h-fit">
+                                    <h2 className="font-black text-indigo-700 mb-6 italic tracking-tight">NEW RECORD +</h2>
+                                    <form onSubmit={handleSubmit} className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase">生產日期</label><input type="date" className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.date} onChange={e=>setFormData({...formData, date:e.target.value})} /></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 uppercase">機台</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.machine} onChange={e=>setFormData({...formData, machine:e.target.value})}>{config.machines.map(m=><option key={m}>{m}</option>)}</select></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 uppercase">組長</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.leader} onChange={e=>setFormData({...formData, leader:e.target.value})}>{config.leaders.map(l=><option key={l}>{l}</option>)}</select></div>
+                                        </div>
+                                        <div><label className="text-[10px] font-bold text-slate-400 uppercase">產品口味</label><select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.flavor} onChange={e=>setFormData({...formData, flavor:e.target.value})}>{config.flavors.map(f=><option key={f}>{f}</option>)}</select></div>
+                                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white">
+                                            <div><label className="text-[10px] opacity-50">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.startTime} onChange={e=>setFormData({...formData, startTime:e.target.value})} /></div>
+                                            <div><label className="text-[10px] opacity-50">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.endTime} onChange={e=>setFormData({...formData, endTime:e.target.value})} /></div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div><label className="text-[10px] font-bold text-slate-400">人數</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold" value={formData.staffCount} onChange={e=>setFormData({...formData, staffCount:Number(e.target.value)})} /></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400">前置(分)</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold" value={formData.prepTime} onChange={e=>setFormData({...formData, prepTime:Number(e.target.value)})} /></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400">產量</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold" value={formData.totalUnits} onChange={e=>setFormData({...formData, totalUnits:Number(e.target.value)})} /></div>
+                                        </div>
+                                        <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-all">儲存並同步至雲端</button>
+                                    </form>
                                 </div>
                                 <div className="lg:col-span-7 space-y-3">
-                                    <h2 className="text-lg font-black text-slate-700 uppercase italic">Recent Logs</h2>
+                                    <div className="flex justify-between items-end mb-2">
+                                        <h2 className="font-black text-slate-700 italic">LOGS ({records.length})</h2>
+                                    </div>
                                     <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                                         {records.map(r => (
-                                            <div key={r.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between group">
+                                            <div key={r.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between group">
                                                 <div className="flex items-center gap-4">
-                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${r.upph >= 300 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${r.upph>=300?'bg-emerald-500 text-white':'bg-rose-500 text-white'}`}>
                                                         <span className="text-sm leading-none">{r.upph}</span>
-                                                        <span className="text-[7px] uppercase opacity-80">UPPH</span>
+                                                        <span className="text-[7px] uppercase opacity-80 font-bold">UPPH</span>
                                                     </div>
                                                     <div>
-                                                        <div className="font-bold text-slate-800">{r.machine} → {r.flavor}</div>
-                                                        <div className="text-[10px] text-slate-400 font-bold uppercase">{r.date} · {r.leader} · {r.staffCount}人 · {r.duration}分</div>
+                                                        <div className="font-bold text-slate-800">{r.machine} <span className="text-slate-300 mx-1">/</span> {r.flavor}</div>
+                                                        <div className="text-[10px] text-slate-400 font-bold uppercase">{r.date} · {r.leader} · {r.staffCount}人</div>
                                                     </div>
                                                 </div>
-                                                <button onClick={async () => await db.doc(`artifacts/${appId}/public/data/production_records/${r.id}`).delete()} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all">刪除</button>
+                                                <button onClick={()=>db.collection(`artifacts/${appId}/public/data/production_records`).doc(r.id).delete()} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all font-bold text-xs uppercase">Delete</button>
                                             </div>
                                         ))}
                                     </div>
@@ -246,49 +239,49 @@
                             <div className="space-y-8">
                                 <div className="bg-white p-6 rounded-3xl border flex flex-col md:flex-row justify-between items-center gap-6">
                                     <div className="flex gap-4">
-                                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">篩選機台</label><select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.machine} onChange={e => setDashboardFilter({...dashboardFilter, machine: e.target.value})}><option>全部</option>{config.machines.map(m => <option key={m}>{m}</option>)}</select></div>
-                                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">篩選組長</label><select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.leader} onChange={e => setDashboardFilter({...dashboardFilter, leader: e.target.value})}><option>全部</option>{config.leaders.map(l => <option key={l}>{l}</option>)}</select></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">篩選機台</label><select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.machine} onChange={e=>setDashboardFilter({...dashboardFilter, machine:e.target.value})}><option>全部</option>{config.machines.map(m=><option key={m}>{m}</option>)}</select></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">篩選組長</label><select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.leader} onChange={e=>setDashboardFilter({...dashboardFilter, leader:e.target.value})}><option>全部</option>{config.leaders.map(l=><option key={l}>{l}</option>)}</select></div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">目前篩選平均產值</div>
-                                        <div className={`text-4xl font-black ${stats.avgCurrent >= 300 ? 'text-emerald-500' : 'text-rose-500'}`}>{stats.avgCurrent} <span className="text-xs font-normal opacity-50">UPPH</span></div>
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">當前平均效率</div>
+                                        <div className={`text-4xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg} <span className="text-xs font-normal opacity-50">UPPH</span></div>
                                     </div>
                                 </div>
 
                                 <div className="bg-white p-8 rounded-3xl border h-80">
-                                    <h3 className="font-black text-slate-400 text-xs uppercase mb-6 italic tracking-widest">Daily Performance Trend</h3>
+                                    <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest italic">Productivity Trend Line</h3>
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={stats.trendData}>
+                                        <AreaChart data={stats.trend}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                             <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
                                             <YAxis fontSize={10} axisLine={false} tickLine={false} />
                                             <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
                                             <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" />
-                                            <Area type="monotone" dataKey="avgUPPH" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={3} />
+                                            <Area type="monotone" dataKey="avg" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={3} />
                                         </AreaChart>
                                     </ResponsiveContainer>
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                     <div className="bg-white p-8 rounded-3xl border">
-                                        <h3 className="font-black text-slate-400 text-xs uppercase mb-6 italic tracking-widest text-center">Flavor Analysis</h3>
+                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest italic text-center">Flavor Ranking</h3>
                                         <div className="space-y-4">
-                                            {stats.flavorData.map(f => (
+                                            {stats.flavor.map(f => (
                                                 <div key={f.name}>
-                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.avgUPPH} UPPH</span></div>
-                                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${f.avgUPPH >= 300 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.avgUPPH/450)*100)}%` }}></div></div>
+                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.avg} UPPH</span></div>
+                                                    <div className="h-1.5 bg-slate-50 rounded-full overflow-hidden border"><div className={`h-full ${f.avg>=300?'bg-emerald-500':'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.avg/450)*100)}%` }}></div></div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                     <div className="bg-white p-8 rounded-3xl border h-64">
-                                        <h3 className="font-black text-slate-400 text-xs uppercase mb-6 italic tracking-widest text-center">Leader Ranking</h3>
+                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest italic text-center">Leader Performance</h3>
                                         <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart data={stats.leaderData}>
+                                            <BarChart data={stats.leader}>
                                                 <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
                                                 <Tooltip cursor={{fill: '#f8fafc'}} />
-                                                <Bar dataKey="avgUPPH" radius={[4, 4, 0, 0]} barSize={30}>
-                                                    {stats.leaderData.map((e, i) => <Cell key={i} fill={e.avgUPPH >= 300 ? '#6366f1' : '#fb7185'} />)}
+                                                <Bar dataKey="avg" radius={[4, 4, 0, 0]} barSize={30}>
+                                                    {stats.leader.map((e, i) => <Cell key={i} fill={e.avg>=300?'#6366f1':'#fb7185'} />)}
                                                 </Bar>
                                             </BarChart>
                                         </ResponsiveContainer>
@@ -300,27 +293,27 @@
                         {activeTab === 'settings' && (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                                 {['machines', 'leaders', 'flavors'].map(type => (
-                                    <div key={type} className="bg-white p-6 rounded-3xl border">
-                                        <h3 className="font-black text-slate-700 uppercase mb-4 tracking-tighter">{type === 'machines' ? '機台名單' : type === 'leaders' ? '組長名單' : '產品口味'}</h3>
+                                    <div key={type} className="bg-white p-6 rounded-3xl border shadow-sm">
+                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-sm tracking-widest">{type==='machines'?'機台':type==='leaders'?'組長':'口味'}名單</h3>
                                         <div className="flex gap-2 mb-4">
-                                            <input type="text" id={`in-${type}`} className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm" placeholder="新增..." />
+                                            <input type="text" id={`in-${type}`} className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold" placeholder="輸入名稱..." />
                                             <button onClick={() => {
-                                                const val = document.getElementById(`in-${type}`).value;
-                                                if(val) {
-                                                    const newConfig = { ...config, [type]: [...config[type], val] };
-                                                    db.doc(`artifacts/${appId}/public/data/system_config`).set(newConfig);
-                                                    document.getElementById(`in-${type}`).value = '';
+                                                const el = document.getElementById(`in-${type}`);
+                                                if(el.value) {
+                                                    const newC = { ...config, [type]: [...config[type], el.value] };
+                                                    db.doc(`artifacts/${appId}/public/data/system_config`).set(newC);
+                                                    el.value = '';
                                                 }
-                                            }} className="bg-indigo-600 text-white p-2 rounded-lg">+</button>
+                                            }} className="bg-indigo-600 text-white w-8 h-8 rounded-lg font-bold">+</button>
                                         </div>
                                         <div className="space-y-2">
                                             {config[type].map(item => (
-                                                <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-sm">
+                                                <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-xs font-bold">
                                                     <span>{item}</span>
                                                     <button onClick={() => {
-                                                        const newConfig = { ...config, [type]: config[type].filter(i => i !== item) };
-                                                        db.doc(`artifacts/${appId}/public/data/system_config`).set(newConfig);
-                                                    }} className="text-slate-300 hover:text-rose-500">×</button>
+                                                        const newC = { ...config, [type]: config[type].filter(i=>i!==item) };
+                                                        db.doc(`artifacts/${appId}/public/data/system_config`).set(newC);
+                                                    }} className="text-slate-300 hover:text-rose-500 font-black">×</button>
                                                 </div>
                                             ))}
                                         </div>
