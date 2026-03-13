@@ -13,45 +13,102 @@ import {
 } from 'lucide-react';
 
 // --- Firebase 初始化配置 ---
-// 優先使用環境變數，若無則使用使用者提供的正式專案配置
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : {
-      apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
-      authDomain: "packaging-7427b.firebaseapp.com",
-      projectId: "packaging-7427b",
-      storageBucket: "packaging-7427b.firebasestorage.app",
-      messagingSenderId: "1058360680341",
-      appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
-    };
+let firebaseConfig;
+try {
+  firebaseConfig = (typeof __firebase_config !== 'undefined' && __firebase_config) 
+    ? JSON.parse(__firebase_config) 
+    : {
+        apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
+        authDomain: "packaging-7427b.firebaseapp.com",
+        projectId: "packaging-7427b",
+        storageBucket: "packaging-7427b.firebasestorage.app",
+        messagingSenderId: "1058360680341",
+        appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
+      };
+} catch (e) {
+  firebaseConfig = {
+    apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
+    authDomain: "packaging-7427b.firebaseapp.com",
+    projectId: "packaging-7427b",
+    storageBucket: "packaging-7427b.firebasestorage.app",
+    messagingSenderId: "1058360680341",
+    appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
+  };
+}
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'packaging-productivity-app';
 
+// 子組件定義
+const ConfigSection = ({ title, type, items = [], icon: Icon, addConfigItem, removeConfigItem }) => {
+    const [input, setInput] = useState('');
+    const handleAdd = () => {
+      if (input.trim()) {
+        addConfigItem(type, input.trim());
+        setInput('');
+      }
+    };
+    return (
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div className="flex items-center gap-2 mb-4">
+          <Icon className="text-indigo-500" size={20} />
+          <h3 className="font-bold text-lg">{title}</h3>
+        </div>
+        <div className="flex gap-2 mb-4">
+          <input 
+            type="text" 
+            className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" 
+            placeholder={`新增${title}...`} 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+          />
+          <button 
+            type="button"
+            onClick={handleAdd} 
+            className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            <Plus size={20} />
+          </button>
+        </div>
+        <div className="space-y-2 h-48 overflow-y-auto pr-1">
+          {Array.isArray(items) && items.map(item => (
+            <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg group">
+              <span className="text-slate-700 text-sm">{item}</span>
+              <button 
+                type="button"
+                onClick={() => removeConfigItem(type, item)} 
+                className="text-slate-300 hover:text-rose-500 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+};
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('record'); 
   const [loading, setLoading] = useState(true);
   
-  // 後台設定狀態 (從資料庫同步)
   const [config, setConfig] = useState({
     machines: ['凱炫機', '自動包裝機', '立式機'],
     leaders: ['組長A', '組長B', '組長C'],
     flavors: ['巧巧酥', '原味蛋捲', '芝麻餅乾', '巧克力派']
   });
 
-  // 篩選器狀態
   const [dashboardFilter, setDashboardFilter] = useState({
     machine: '全部',
     leader: '全部'
   });
 
-  // 記錄狀態 (從資料庫同步)
   const [records, setRecords] = useState([]);
   
-  // 表單狀態
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     machine: '',
@@ -64,7 +121,6 @@ const App = () => {
     totalUnits: 0
   });
 
-  // 1. 初始化驗證 (RULE 3)
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -75,38 +131,44 @@ const App = () => {
         }
       } catch (error) {
         console.error("Auth error", error);
+        setLoading(false); // 就算報錯也要停止載入狀態
       }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u) setLoading(false);
+      setLoading(false); // 只要 Auth 狀態有變動就停止載入
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. 監聽資料庫 - 設定檔與紀錄 (RULE 1)
   useEffect(() => {
     if (!user) return;
 
-    // 監聽紀錄 (使用規則 1 的路徑)
     const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'production_records');
     const unsubscribeRecords = onSnapshot(recordsCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // 在內存進行排序
-      setRecords(data.sort((a, b) => new Date(b.date) - new Date(a.date) || b.id.localeCompare(a.id)));
+      const sorted = [...data].sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return (dateB - dateA) || (b.id?.localeCompare(a.id || '') || 0);
+      });
+      setRecords(sorted);
     }, (err) => console.error("Firestore error", err));
 
-    // 監聽設定檔
     const configDoc = doc(db, 'artifacts', appId, 'public', 'data', 'system_config');
     const unsubscribeConfig = onSnapshot(configDoc, (docSnap) => {
       if (docSnap.exists()) {
-        setConfig(docSnap.data());
+        const data = docSnap.data();
+        setConfig({
+          machines: data.machines || [],
+          leaders: data.leaders || [],
+          flavors: data.flavors || []
+        });
       } else {
-        // 如果沒有設定檔，存入初始預設值
         setDoc(configDoc, config);
       }
-    });
+    }, (err) => console.error("Config load error", err));
 
     return () => {
       unsubscribeRecords();
@@ -114,7 +176,6 @@ const App = () => {
     };
   }, [user]);
 
-  // 更新表單預設值
   useEffect(() => {
     if (config.machines.length > 0) {
       setFormData(prev => ({
@@ -127,6 +188,7 @@ const App = () => {
   }, [config]);
 
   const calculateDuration = (start, end) => {
+    if (!start || !end) return 0;
     const [h1, m1] = start.split(':').map(Number);
     const [h2, m2] = end.split(':').map(Number);
     let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
@@ -140,7 +202,7 @@ const App = () => {
 
     const duration = calculateDuration(formData.startTime, formData.endTime);
     const totalWorkMinutes = (duration + Number(formData.prepTime)) * formData.staffCount;
-    const upph = Math.round((formData.totalUnits / totalWorkMinutes) * 60);
+    const upph = totalWorkMinutes > 0 ? Math.round((formData.totalUnits / totalWorkMinutes) * 60) : 0;
 
     const recordData = {
       ...formData,
@@ -159,7 +221,7 @@ const App = () => {
   };
 
   const deleteRecord = async (id) => {
-    if (!user) return;
+    if (!user || !id) return;
     try {
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'production_records', id);
       await deleteDoc(docRef);
@@ -179,13 +241,15 @@ const App = () => {
   };
 
   const addConfigItem = (type, value) => {
-    if (!value.trim() || config[type].includes(value)) return;
+    if (!value || !value.trim() || config[type].includes(value)) return;
     const newConfig = { ...config, [type]: [...config[type], value] };
+    setConfig(newConfig);
     updateRemoteConfig(newConfig);
   };
 
   const removeConfigItem = (type, value) => {
     const newConfig = { ...config, [type]: config[type].filter(i => i !== value) };
+    setConfig(newConfig);
     updateRemoteConfig(newConfig);
   };
 
@@ -201,33 +265,38 @@ const App = () => {
     const dailyMap = {};
 
     filtered.forEach(r => {
+      if (!r.machine || !r.leader || !r.flavor || !r.date) return;
+
       if (!machineMap[r.machine]) machineMap[r.machine] = { name: r.machine, totalUPPH: 0, count: 0 };
-      machineMap[r.machine].totalUPPH += r.upph;
+      machineMap[r.machine].totalUPPH += (r.upph || 0);
       machineMap[r.machine].count += 1;
 
       if (!leaderMap[r.leader]) leaderMap[r.leader] = { name: r.leader, totalUPPH: 0, count: 0 };
-      leaderMap[r.leader].totalUPPH += r.upph;
+      leaderMap[r.leader].totalUPPH += (r.upph || 0);
       leaderMap[r.leader].count += 1;
 
       if (!flavorMap[r.flavor]) flavorMap[r.flavor] = { name: r.flavor, totalUPPH: 0, count: 0 };
-      flavorMap[r.flavor].totalUPPH += r.upph;
+      flavorMap[r.flavor].totalUPPH += (r.upph || 0);
       flavorMap[r.flavor].count += 1;
 
       if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, totalUPPH: 0, count: 0 };
-      dailyMap[r.date].totalUPPH += r.upph;
+      dailyMap[r.date].totalUPPH += (r.upph || 0);
       dailyMap[r.date].count += 1;
     });
 
     const machineData = Object.values(machineMap).map(m => ({ name: m.name, avgUPPH: Math.round(m.totalUPPH / m.count) }));
     const leaderData = Object.values(leaderMap).map(l => ({ name: l.name, avgUPPH: Math.round(l.totalUPPH / l.count) }));
     const flavorData = Object.values(flavorMap).map(f => ({ name: f.name, avgUPPH: Math.round(f.totalUPPH / f.count) })).sort((a,b) => b.avgUPPH - a.avgUPPH);
-    const trendData = Object.values(dailyMap).sort((a, b) => new Date(a.date) - new Date(b.date)).map(d => ({
-      date: d.date.split('-').slice(1).join('/'), 
-      avgUPPH: Math.round(d.totalUPPH / d.count)
-    }));
+    
+    const trendData = Object.values(dailyMap)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .map(d => ({
+        date: typeof d.date === 'string' ? d.date.split('-').slice(1).join('/') : 'N/A', 
+        avgUPPH: Math.round(d.totalUPPH / d.count)
+      }));
 
-    const avgCurrent = filtered.length > 0 ? Math.round(filtered.reduce((acc, curr) => acc + curr.upph, 0) / filtered.length) : 0;
-    const totalUnits = filtered.reduce((acc, curr) => acc + curr.totalUnits, 0);
+    const avgCurrent = filtered.length > 0 ? Math.round(filtered.reduce((acc, curr) => acc + (curr.upph || 0), 0) / filtered.length) : 0;
+    const totalUnits = filtered.reduce((acc, curr) => acc + (curr.totalUnits || 0), 0);
 
     return { machineData, leaderData, flavorData, trendData, avgCurrent, totalUnits, filteredCount: filtered.length };
   }, [records, dashboardFilter]);
@@ -278,7 +347,7 @@ const App = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2 text-xs font-bold text-slate-400 mb-1 flex justify-between">
                       <span>生產日期</span>
-                      <span className="text-indigo-500">USER: {user?.uid.slice(0,6)}</span>
+                      <span className="text-indigo-500">USER: {user?.uid?.slice(0,6) || 'Anon'}</span>
                     </div>
                     <div className="col-span-2">
                       <input type="date" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
@@ -286,20 +355,20 @@ const App = () => {
                     <div>
                       <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">機台選擇</label>
                       <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" value={formData.machine} onChange={(e) => setFormData({...formData, machine: e.target.value})}>
-                        {config.machines.map(m => <option key={m}>{m}</option>)}
+                        {config.machines.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">現場組長</label>
                       <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" value={formData.leader} onChange={(e) => setFormData({...formData, leader: e.target.value})}>
-                        {config.leaders.map(l => <option key={l}>{l}</option>)}
+                        {config.leaders.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">產品口味</label>
                     <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" value={formData.flavor} onChange={(e) => setFormData({...formData, flavor: e.target.value})}>
-                      {config.flavors.map(f => <option key={f}>{f}</option>)}
+                      {config.flavors.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white">
@@ -343,8 +412,8 @@ const App = () => {
                   {records.map(record => (
                     <div key={record.id} className="p-4 rounded-2xl border border-slate-100 flex items-center justify-between hover:border-indigo-200 transition-all bg-slate-50/50 group">
                       <div className="flex items-center gap-4">
-                        <div className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center font-black ${record.upph > 300 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200' : 'bg-rose-500 text-white shadow-lg shadow-rose-200'}`}>
-                          <span className="text-lg leading-none">{record.upph}</span>
+                        <div className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center font-black ${(record.upph || 0) > 300 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200' : 'bg-rose-500 text-white shadow-lg shadow-rose-200'}`}>
+                          <span className="text-lg leading-none">{record.upph || 0}</span>
                           <span className="text-[8px] mt-1 opacity-80 uppercase">UPPH</span>
                         </div>
                         <div>
@@ -376,15 +445,15 @@ const App = () => {
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-black text-slate-400 uppercase">機台</span>
                   <select className="p-2 bg-slate-100 border-none rounded-lg text-sm font-bold outline-none" value={dashboardFilter.machine} onChange={e => setDashboardFilter({...dashboardFilter, machine: e.target.value})}>
-                    <option>全部</option>
-                    {config.machines.map(m => <option key={m}>{m}</option>)}
+                    <option value="全部">全部</option>
+                    {config.machines.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-black text-slate-400 uppercase">組長</span>
                   <select className="p-2 bg-slate-100 border-none rounded-lg text-sm font-bold outline-none" value={dashboardFilter.leader} onChange={e => setDashboardFilter({...dashboardFilter, leader: e.target.value})}>
-                    <option>全部</option>
-                    {config.leaders.map(l => <option key={l}>{l}</option>)}
+                    <option value="全部">全部</option>
+                    {config.leaders.map(l => <option key={l} value={l}>{l}</option>)}
                   </select>
                 </div>
               </div>
@@ -476,39 +545,36 @@ const App = () => {
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <ConfigSection title="機台清單" type="machines" items={config.machines} icon={Package} />
-              <ConfigSection title="組長名單" type="leaders" items={config.leaders} icon={User} />
-              <ConfigSection title="口味設定" type="flavors" items={config.flavors} icon={ClipboardList} />
+              <ConfigSection 
+                title="機台清單" 
+                type="machines" 
+                items={config.machines || []} 
+                icon={Package} 
+                addConfigItem={addConfigItem} 
+                removeConfigItem={removeConfigItem} 
+              />
+              <ConfigSection 
+                title="組長名單" 
+                type="leaders" 
+                items={config.leaders || []} 
+                icon={User} 
+                addConfigItem={addConfigItem} 
+                removeConfigItem={removeConfigItem} 
+              />
+              <ConfigSection 
+                title="口味設定" 
+                type="flavors" 
+                items={config.flavors || []} 
+                icon={ClipboardList} 
+                addConfigItem={addConfigItem} 
+                removeConfigItem={removeConfigItem} 
+              />
             </div>
           </div>
         )}
       </main>
     </div>
   );
-};
-
-const ConfigSection = ({ title, type, items, icon: Icon, addConfigItem, removeConfigItem }) => {
-    const [input, setInput] = useState('');
-    return (
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <div className="flex items-center gap-2 mb-4">
-          <Icon className="text-indigo-500" size={20} />
-          <h3 className="font-bold text-lg">{title}</h3>
-        </div>
-        <div className="flex gap-2 mb-4">
-          <input type="text" className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" placeholder={`新增${title}...`} value={input} onChange={(e) => setInput(e.target.value)} />
-          <button onClick={() => { addConfigItem(type, input); setInput(''); }} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition-colors"><Plus size={20} /></button>
-        </div>
-        <div className="space-y-2 h-48 overflow-y-auto pr-1">
-          {items.map(item => (
-            <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg group">
-              <span className="text-slate-700 text-sm">{item}</span>
-              <button onClick={() => removeConfigItem(type, item)} className="text-slate-300 hover:text-rose-500 transition-colors"><X size={16} /></button>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
 };
 
 export default App;
