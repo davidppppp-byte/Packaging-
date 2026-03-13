@@ -5,22 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PACKING FLOW - 包裝部產值系統</title>
     
-    <!-- 使用 jsdelivr CDN 提高 GitHub Pages 的載入穩定性 -->
-    <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <!-- 1. 核心引擎 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- 加入 PropTypes (修正 Recharts 報錯的核心關鍵) -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/recharts/umd/Recharts.js"></script>
+    
+    <!-- 2. Recharts 穩定版 -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 
-    <!-- Firebase SDK (穩定版) -->
+    <!-- 3. Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; }
-        #loading-overlay {
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; margin: 0; padding: 0; }
+        #system-loader {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: #0f172a; color: white; display: flex;
             flex-direction: column; align-items: center; justify-content: center;
@@ -31,42 +35,28 @@
             border-left-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .error-log {
-            margin-top: 20px; color: #f87171; font-size: 11px; font-family: monospace;
-            max-width: 80%; word-break: break-all; text-align: center;
-        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <!-- 啟動監測畫面 -->
-    <div id="loading-overlay">
+    <div id="system-loader">
         <div class="spinner"></div>
-        <p id="status-text" style="margin-top: 1rem; font-weight: bold;">正在下載系統元件...</p>
-        <div id="error-log" class="error-log"></div>
-        <button id="skip-btn" style="display:none; margin-top:20px; background:#4f46e5; padding:10px 20px; border-radius:8px;" onclick="document.getElementById('loading-overlay').remove()">強制進入</button>
+        <p id="loader-msg" style="margin-top: 1.5rem; font-weight: bold; color: #a5b4fc;">正在啟動 PACKING FLOW...</p>
     </div>
 
     <div id="root"></div>
 
-    <script>
-        // 全域錯誤擷取，專門抓 Line 0 錯誤
-        window.onerror = function(msg, url, line) {
-            const log = document.getElementById('error-log');
-            log.innerText += `\n[系統錯誤]: ${msg} (Line: ${line})`;
-            document.getElementById('status-text').innerText = "系統啟動受阻";
-            document.getElementById('skip-btn').style.display = 'block';
-            return false;
-        };
-
-        // 檢查環境變數
-        console.log("System Pre-check: Ready");
-    </script>
-
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
-        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine, Cell } = Recharts;
+        // 安全抓取 Recharts 元件
+        const { 
+            BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+            AreaChart, Area, ReferenceLine, Cell 
+        } = window.Recharts || {};
 
-        // --- Firebase 配置 ---
+        const { useState, useEffect, useMemo } = React;
+
+        // Firebase 專屬配置
         const firebaseConfig = {
             apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
             authDomain: "packaging-7427b.firebaseapp.com",
@@ -76,19 +66,17 @@
             appId: "1:1058360680341:web:cdba79a3b8866ddb45a09c"
         };
 
-        // 圖標內聯組件
+        // 圖標元件
         const Icon = ({ name, size = 18 }) => {
             const paths = {
-                save: "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM17 21v-8H7v8M7 3v5h8",
                 chart: "M18 20V10M12 20V4M6 20v-6",
-                user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
-                settings: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.72V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.72V4a2 2 0 0 0-2-2z"
+                settings: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.72V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.72V4a2 2 0 0 0-2-2z",
+                plus: "M12 5v14M5 12h14"
             };
             return (
                 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline-block'}}>
                     <path d={paths[name]} />
-                    {name==='user' && <circle cx="12" cy="7" r="4" />}
-                    {name==='settings' && <circle cx="12" cy="12" r="3" />}
+                    {name === 'settings' && <circle cx="12" cy="12" r="3" />}
                 </svg>
             );
         };
@@ -107,37 +95,47 @@
                 machine: '', leader: '', flavor: '', count: 3, start: '08:00', end: '12:00', prep: 10, total: 0
             });
 
-            // 初始化 Firebase 連線
+            const appId = "packaging-productivity-app";
+
             useEffect(() => {
                 try {
                     if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                     const db = firebase.firestore();
-                    const appId = "packaging-productivity-app";
-
-                    document.getElementById('status-text').innerText = "正在同步雲端數據...";
 
                     firebase.auth().signInAnonymously().then(() => {
-                        // 監聽設定
-                        db.doc(`artifacts/${appId}/public/data/system_config`).onSnapshot(doc => {
+                        // 修正路徑：使用偶數段路徑 artifacts/appId/public/data/configs/system
+                        const configPath = `artifacts/${appId}/public/data/configs/system`;
+                        const recordsPath = `artifacts/${appId}/public/data/production_records`;
+
+                        db.doc(configPath).onSnapshot(doc => {
                             if (doc.exists) setConfig(doc.data());
+                            else db.doc(configPath).set(config);
                         });
-                        // 監聽紀錄
-                        db.collection(`artifacts/${appId}/public/data/production_records`).onSnapshot(snap => {
+
+                        db.collection(recordsPath).onSnapshot(snap => {
                             const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                             setRecords(data.sort((a,b) => new Date(b.date) - new Date(a.date)));
-                            document.getElementById('loading-overlay').style.display = 'none';
+                            
+                            const loader = document.getElementById('system-loader');
+                            if (loader) loader.style.display = 'none';
+                        }, (err) => {
+                            console.error("Firestore 錯誤", err);
+                            document.getElementById('system-loader').style.display = 'none';
                         });
                     });
                 } catch (e) {
                     console.error(e);
-                    document.getElementById('loading-overlay').style.display = 'none';
                 }
             }, []);
 
-            // 下拉選單連動
             useEffect(() => {
                 if (config.machines.length > 0) {
-                    setForm(f => ({...f, machine: f.machine || config.machines[0], leader: f.leader || config.leaders[0], flavor: f.flavor || config.flavors[0]}));
+                    setForm(f => ({
+                        ...f, 
+                        machine: f.machine || config.machines[0], 
+                        leader: f.leader || config.leaders[0], 
+                        flavor: f.flavor || config.flavors[0]
+                    }));
                 }
             }, [config]);
 
@@ -151,38 +149,49 @@
                 const totalMin = (dur + Number(form.prep)) * form.count;
                 const upph = totalMin > 0 ? Math.round((form.total / totalMin) * 60) : 0;
 
-                await firebase.firestore().collection(`artifacts/packaging-productivity-app/public/data/production_records`).add({
-                    ...form, duration: dur, upph, createdAt: new Date().toISOString()
-                });
-                setForm({...form, total: 0});
+                try {
+                    await firebase.firestore().collection(`artifacts/${appId}/public/data/production_records`).add({
+                        ...form, duration: dur, upph, createdAt: new Date().toISOString()
+                    });
+                    setForm({...form, total: 0});
+                } catch (err) {
+                    alert("儲存失敗：" + err.message);
+                }
             };
 
             const stats = useMemo(() => {
                 const filtered = records.filter(r => (filter.machine === '全部' || r.machine === filter.machine) && (filter.leader === '全部' || r.leader === filter.leader));
                 const daily = {}; const flavMap = {}; const leadMap = {};
+                
                 filtered.forEach(r => {
-                    if(!daily[r.date]) daily[r.date] = { sum: 0, count: 0 };
-                    daily[r.date].sum += (r.upph || 0); daily[r.date].count++;
-                    if(!flavMap[r.flavor]) flavMap[r.flavor] = { name: r.flavor, sum: 0, count: 0 };
-                    flavMap[r.flavor].sum += (r.upph || 0); flavMap[r.flavor].count++;
-                    if(!leadMap[r.leader]) leadMap[r.leader] = { name: r.leader, sum: 0, count: 0 };
-                    leadMap[r.leader].sum += (r.upph || 0); leadMap[r.leader].count++;
+                    const d = r.date || '無日期';
+                    if(!daily[d]) daily[d] = { sum: 0, count: 0 };
+                    daily[d].sum += (Number(r.upph) || 0); daily[d].count++;
+                    
+                    const f = r.flavor || '未知口味';
+                    if(!flavMap[f]) flavMap[f] = { name: f, sum: 0, count: 0 };
+                    flavMap[f].sum += (Number(r.upph) || 0); flavMap[f].count++;
+                    
+                    const l = r.leader || '未知組長';
+                    if(!leadMap[l]) leadMap[l] = { name: l, sum: 0, count: 0 };
+                    leadMap[l].sum += (Number(r.upph) || 0); leadMap[l].count++;
                 });
+
                 return {
                     trend: Object.keys(daily).sort().map(d => ({ date: d.slice(5), upph: Math.round(daily[d].sum/daily[d].count) })),
                     flavs: Object.values(flavMap).map(f => ({ name: f.name, upph: Math.round(f.sum/f.count) })).sort((a,b)=>b.upph-a.upph),
                     leads: Object.values(leadMap).map(l => ({ name: l.name, upph: Math.round(l.sum/l.count) })),
-                    avg: filtered.length ? Math.round(filtered.reduce((a,c)=>a+(c.upph||0),0)/filtered.length) : 0
+                    avg: filtered.length ? Math.round(filtered.reduce((a,c)=>a+(Number(c.upph)||0),0)/filtered.length) : 0
                 };
             }, [records, filter]);
 
             return (
                 <div className="min-h-screen">
-                    <nav className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-2xl">
-                        <h1 className="font-black italic text-lg tracking-tighter">PACKING FLOW</h1>
+                    <nav className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-xl">
+                        <h1 className="font-black italic text-lg tracking-tighter text-indigo-400 uppercase">Packing Flow</h1>
                         <div className="flex gap-1 bg-slate-800 p-1 rounded-xl">
                             {['record', 'dashboard', 'settings'].map(t => (
-                                <button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-lg text-xs font-bold ${activeTab===t?'bg-indigo-600':'text-slate-400'}`}>
+                                <button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab===t?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>
                                     {t==='record'?'錄入':t==='dashboard'?'報表':'設定'}
                                 </button>
                             ))}
@@ -191,36 +200,36 @@
 
                     <div className="max-w-7xl mx-auto p-4 md:p-8">
                         {activeTab === 'record' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
                                 <div className="lg:col-span-4 bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                    <h2 className="font-bold text-indigo-600 mb-6 uppercase flex items-center gap-2 tracking-widest text-sm">New Production +</h2>
+                                    <h2 className="font-bold text-indigo-600 mb-6 flex items-center gap-2 tracking-widest text-sm uppercase"><Icon name="plus" /> New Entry</h2>
                                     <form onSubmit={handleSave} className="space-y-4">
                                         <div><label className="text-[10px] font-bold text-slate-400 block mb-1">生產日期</label><input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-bold" value={form.date} onChange={e=>setForm({...form, date:e.target.value})}/></div>
                                         <div className="grid grid-cols-2 gap-2">
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1">機台</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold" value={form.machine} onChange={e=>setForm({...form, machine:e.target.value})}>{config.machines.map(m=><option key={m}>{m}</option>)}</select></div>
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1">組長</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold" value={form.leader} onChange={e=>setForm({...form, leader:e.target.value})}>{config.leaders.map(l=><option key={l}>{l}</option>)}</select></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1">機台</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.machine} onChange={e=>setForm({...form, machine:e.target.value})}>{config.machines.map(m=><option key={m}>{m}</option>)}</select></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1">組長</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.leader} onChange={e=>setForm({...form, leader:e.target.value})}>{config.leaders.map(l=><option key={l}>{l}</option>)}</select></div>
                                         </div>
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">品項口味</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold" value={form.flavor} onChange={e=>setForm({...form, flavor:e.target.value})}>{config.flavors.map(f=><option key={f}>{f}</option>)}</select></div>
-                                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white">
-                                            <div><label className="text-[10px] opacity-40 block mb-1">開始</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.start} onChange={e=>setForm({...form, start:e.target.value})}/></div>
-                                            <div><label className="text-[10px] opacity-40 block mb-1">結束</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.end} onChange={e=>setForm({...form, end:e.target.value})}/></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">品項口味</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.flavor} onChange={e=>setForm({...form, flavor:e.target.value})}>{config.flavors.map(f=><option key={f}>{f}</option>)}</select></div>
+                                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white shadow-inner">
+                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.start} onChange={e=>setForm({...form, start:e.target.value})}/></div>
+                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.end} onChange={e=>setForm({...form, end:e.target.value})}/></div>
                                         </div>
                                         <div className="grid grid-cols-3 gap-2">
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 text-center">人數</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.count} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 text-center">前置</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.prep} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 text-center">產量</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.total} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1">人數</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.count} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1">前置</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.prep} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
+                                            <div className="text-center"><label className="text-[10px] font-bold text-slate-400 block mb-1">產量</label><input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center" value={form.total} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
                                         </div>
-                                        <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-all">儲存數據至雲端</button>
+                                        <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-all hover:bg-indigo-700 uppercase">Save Record</button>
                                     </form>
                                 </div>
-                                <div className="lg:col-span-8 space-y-3">
-                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic">Recent Logs ({records.length})</h2>
-                                    <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2">
+                                <div className="lg:col-span-8 space-y-4">
+                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic">Production History ({records.length})</h2>
+                                    <div className="space-y-2 max-h-[650px] overflow-y-auto pr-2 custom-scrollbar">
                                         {records.map(r => (
                                             <div key={r.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between group shadow-sm hover:border-indigo-300 transition-all">
                                                 <div className="flex items-center gap-4">
-                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${r.upph>=300?'bg-emerald-500 text-white':'bg-rose-500 text-white'}`}>
-                                                        <span className="text-base">{r.upph}</span>
+                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${Number(r.upph)>=300?'bg-emerald-500 text-white':'bg-rose-500 text-white'}`}>
+                                                        <span className="text-base leading-none">{r.upph}</span>
                                                         <span className="text-[7px] uppercase font-bold">UPPH</span>
                                                     </div>
                                                     <div>
@@ -228,7 +237,7 @@
                                                         <div className="text-[10px] text-slate-400 font-bold uppercase">{r.date} · {r.leader} · {r.count}人 · {r.duration}分</div>
                                                     </div>
                                                 </div>
-                                                <button onClick={()=>firebase.firestore().doc(`artifacts/packaging-productivity-app/public/data/production_records/${r.id}`).delete()} className="text-rose-400 font-bold text-xs px-3">刪除</button>
+                                                <button onClick={()=>firebase.firestore().doc(`artifacts/${appId}/public/data/production_records/${r.id}`).delete()} className="text-rose-400 font-bold text-xs px-3 opacity-0 group-hover:opacity-100 transition-all uppercase">Delete</button>
                                             </div>
                                         ))}
                                     </div>
@@ -237,51 +246,60 @@
                         )}
 
                         {activeTab === 'dashboard' && (
-                            <div className="space-y-8 animate-in fade-in duration-500">
+                            <div className="space-y-8 animate-in fade-in duration-700">
                                 <div className="bg-white p-6 rounded-3xl border flex flex-col md:flex-row justify-between items-center gap-6 shadow-sm">
-                                    <div className="flex gap-4">
+                                    <div className="flex gap-3">
                                         <select className="bg-slate-100 p-2.5 rounded-xl font-bold text-xs outline-none" value={filter.machine} onChange={e=>setFilter({...filter, machine:e.target.value})}><option>全部機台</option>{config.machines.map(m=><option key={m}>{m}</option>)}</select>
                                         <select className="bg-slate-100 p-2.5 rounded-xl font-bold text-xs outline-none" value={filter.leader} onChange={e=>setFilter({...filter, leader:e.target.value})}><option>全部組長</option>{config.leaders.map(l=><option key={l}>{l}</option>)}</select>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">當前平均效率</div>
-                                        <div className={`text-5xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg} <span className="text-sm font-normal opacity-50 font-sans">UPPH</span></div>
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">當前平均人均小時產值</div>
+                                        <div className={`text-5xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg} <span className="text-sm font-normal opacity-40">UPPH</span></div>
                                     </div>
                                 </div>
                                 <div className="bg-white p-8 rounded-3xl border h-80 shadow-sm">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={stats.trend}>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                            <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
-                                            <YAxis fontSize={10} axisLine={false} tickLine={false} />
-                                            <Tooltip />
-                                            <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" label={{value:'目標', position:'right', fill:'#fb7185', fontSize:10}} />
-                                            <Area type="monotone" dataKey="upph" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={4} />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
+                                    <h3 className="font-black text-slate-400 text-[10px] mb-4 uppercase tracking-widest italic flex items-center gap-2"><Icon name="chart" size={14}/> Productivity Trend</h3>
+                                    <div className="h-64 w-full">
+                                        {AreaChart ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <AreaChart data={stats.trend}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                    <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
+                                                    <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                                                    <Tooltip contentStyle={{borderRadius:'12px', border:'none', boxShadow:'0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                                                    <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" />
+                                                    <Area type="monotone" dataKey="upph" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={4} />
+                                                </AreaChart>
+                                            </ResponsiveContainer>
+                                        ) : <div className="flex items-center justify-center h-full text-slate-300">圖表元件載入中...</div>}
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    <div className="bg-white p-6 rounded-3xl border shadow-sm h-64">
+                                    <div className="bg-white p-6 rounded-3xl border shadow-sm h-64 overflow-hidden flex flex-col">
                                         <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Flavor Ranking</h3>
-                                        <div className="space-y-4 overflow-y-auto h-40 pr-2">
+                                        <div className="space-y-4 overflow-y-auto flex-1 pr-2 custom-scrollbar">
                                             {stats.flavs.map(f => (
                                                 <div key={f.name}>
-                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.upph}</span></div>
-                                                    <div className="h-1 bg-slate-100 rounded-full overflow-hidden border border-slate-100 shadow-inner"><div className={`h-full ${f.upph>=300?'bg-emerald-500':'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.upph/450)*100)}%` }}></div></div>
+                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.upph} UPPH</span></div>
+                                                    <div className="h-1.5 bg-slate-50 rounded-full overflow-hidden border shadow-inner"><div className={`h-full ${f.upph>=300?'bg-emerald-500':'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.upph/450)*100)}%` }}></div></div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                     <div className="bg-white p-6 rounded-3xl border shadow-sm h-64">
-                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Leader Efficiency</h3>
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart data={stats.leads}>
-                                                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
-                                                <Bar dataKey="upph" radius={[6, 6, 0, 0]} barSize={30}>
-                                                    {stats.leads.map((e, i) => <Cell key={i} fill={e.upph>=300?'#6366f1':'#fb7185'} />)}
-                                                </Bar>
-                                            </BarChart>
-                                        </ResponsiveContainer>
+                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Leader Performance</h3>
+                                        <div className="h-48 w-full">
+                                            {BarChart ? (
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={stats.leads}>
+                                                        <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
+                                                        <Bar dataKey="upph" radius={[6, 6, 0, 0]} barSize={30}>
+                                                            {stats.leads.map((e, i) => <Cell key={i} fill={e.upph>=300?'#6366f1':'#fb7185'} />)}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            ) : null}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -290,25 +308,25 @@
                         {activeTab === 'settings' && (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-right-4">
                                 {['machines', 'leaders', 'flavors'].map(type => (
-                                    <div key={type} className="bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name={type==='leaders'?'user':'settings'} size={14}/> {type==='machines'?'機台名單':type==='leaders'?'組長名單':'產品口味'}</h3>
+                                    <div key={type} className="bg-white p-6 rounded-3xl border shadow-sm">
+                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="settings" size={14} /> {type==='machines'?'機台名單':type==='leaders'?'組長名單':'產品口味'}</h3>
                                         <div className="flex gap-2 mb-4">
-                                            <input type="text" id={`in-${type}`} className="flex-1 p-3 bg-slate-50 border rounded-xl font-bold text-sm outline-none" placeholder="新增名稱..." onKeyDown={(e)=>e.key==='Enter' && document.getElementById(`btn-${type}`).click()} />
+                                            <input type="text" id={`in-${type}`} className="flex-1 p-3 bg-slate-50 border rounded-xl font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" placeholder="新增名稱..." onKeyDown={(e)=>e.key==='Enter' && document.getElementById(`btn-${type}`).click()} />
                                             <button id={`btn-${type}`} onClick={() => {
                                                 const el = document.getElementById(`in-${type}`);
                                                 if(el && el.value) {
                                                     const newC = { ...config, [type]: [...config[type], el.value.trim()] };
-                                                    firebase.firestore().doc(`artifacts/packaging-productivity-app/public/data/system_config`).set(newC).then(()=>el.value='');
+                                                    firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC).then(()=>el.value='');
                                                 }
                                             }} className="bg-indigo-600 text-white w-12 h-12 rounded-xl font-bold shadow-lg hover:bg-indigo-700">+</button>
                                         </div>
-                                        <div className="space-y-2 h-64 overflow-y-auto pr-1">
+                                        <div className="space-y-2 h-64 overflow-y-auto pr-1 custom-scrollbar">
                                             {config[type].map(item => (
                                                 <div key={item} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-xs font-bold border border-slate-100">
                                                     <span>{item}</span>
                                                     <button onClick={() => {
                                                         const newC = { ...config, [type]: config[type].filter(i=>i!==item) };
-                                                        firebase.firestore().doc(`artifacts/packaging-productivity-app/public/data/system_config`).set(newC);
+                                                        firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
                                                     }} className="text-rose-400 font-black px-2">×</button>
                                                 </div>
                                             ))}
@@ -322,7 +340,6 @@
             );
         };
 
-        // 啟動渲染
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
