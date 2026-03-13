@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>包裝部人均產值即時系統 - PACKING FLOW</title>
     
-    <!-- 1. 核心引擎 -->
+    <!-- 1. 核心引擎 (增加載入檢查) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -33,24 +33,46 @@
             border-left-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .emergency-btn {
+            margin-top: 20px; background: #6366f1; color: white; padding: 10px 20px;
+            border-radius: 8px; font-weight: bold; cursor: pointer; display: none;
+        }
     </style>
 </head>
 <body>
-    <!-- 初始載入 HTML -->
     <div id="initial-loader">
         <div class="spinner"></div>
-        <p id="loader-text" style="margin-top: 1rem; font-weight: bold; letter-spacing: 0.1em;">正在啟動系統核心...</p>
-        <div id="error-display" style="margin-top: 1rem; color: #f87171; font-size: 12px; max-width: 80%; text-align: center;"></div>
+        <p id="loader-text" style="margin-top: 1rem; font-weight: bold; letter-spacing: 0.1em;">正在啟動核心組件...</p>
+        <div id="error-display" style="margin-top: 1rem; color: #f87171; font-size: 12px; max-width: 80%; text-align: center; white-space: pre-wrap;"></div>
+        <button id="emergency-btn" class="emergency-btn" onclick="emergencyStart()">點此強制進入系統</button>
     </div>
 
     <div id="root"></div>
 
+    <script type="text/javascript">
+        // 腳本監控
+        window.onerror = function(msg, url, line) {
+            document.getElementById('error-display').innerText += `\nError: ${msg} (Line ${line})`;
+            return false;
+        };
+
+        // 8秒後顯示強制啟動按鈕
+        setTimeout(() => {
+            const btn = document.getElementById('emergency-btn');
+            if(btn) btn.style.display = 'block';
+        }, 8000);
+
+        function emergencyStart() {
+            const loader = document.getElementById('initial-loader');
+            if(loader) loader.remove();
+        }
+    </script>
+
     <script type="text/babel">
-        // 抓取 React 全域變數
         const { useState, useEffect, useMemo } = React;
         const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine, Cell } = Recharts;
 
-        // Firebase 配置
+        // Firebase 專屬配置
         const firebaseConfig = {
             apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
             authDomain: "packaging-7427b.firebaseapp.com",
@@ -96,10 +118,11 @@
                 startTime: '08:00', endTime: '12:00', prepTime: 10, totalUnits: 0
             });
 
-            // 1. 初始化連線
             useEffect(() => {
                 const init = async () => {
-                    document.getElementById('loader-text').innerText = "正在連結雲端資料庫...";
+                    const statusText = document.getElementById('loader-text');
+                    if(statusText) statusText.innerText = "正在連結雲端資料庫...";
+                    
                     try {
                         if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                         const auth = firebase.auth();
@@ -107,7 +130,7 @@
                         const appId = "packaging-productivity-app";
 
                         await auth.signInAnonymously();
-                        document.getElementById('loader-text').innerText = "連線成功，正在讀取設定...";
+                        if(statusText) statusText.innerText = "資料庫已同步，正在準備介面...";
 
                         // 讀取設定
                         db.doc(`artifacts/${appId}/public/data/system_config`).onSnapshot(doc => {
@@ -124,14 +147,14 @@
                         setIsReady(true);
                     } catch (err) {
                         console.error(err);
-                        document.getElementById('error-display').innerText = "連線發生錯誤，將以離線模式啟動: " + err.message;
+                        const errDisplay = document.getElementById('error-display');
+                        if(errDisplay) errDisplay.innerText = "連線失敗，改以離線模式啟動。\n原因: " + err.message;
                         setTimeout(() => setIsReady(true), 2000);
                     }
                 };
                 init();
             }, []);
 
-            // 隱藏 Loader
             useEffect(() => {
                 if (isReady) {
                     const loader = document.getElementById('initial-loader');
@@ -142,7 +165,6 @@
                 }
             }, [isReady]);
 
-            // 選單連動
             useEffect(() => {
                 if (config.machines.length > 0) {
                     setFormData(p => ({
@@ -219,24 +241,24 @@
                         {activeTab === 'record' && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                                 <div className="lg:col-span-5 bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                    <h2 className="font-black text-indigo-700 mb-6 italic flex items-center gap-2 uppercase"><Icon name="clock" size={18} /> NEW LOG</h2>
+                                    <h2 className="font-black text-indigo-700 mb-6 italic flex items-center gap-2 uppercase"><Icon name="clock" size={18} /> New Log</h2>
                                     <form onSubmit={handleSubmit} className="space-y-4">
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div className="col-span-2 text-xs font-bold text-slate-400">生產日期</div>
+                                            <div className="col-span-2 text-xs font-bold text-slate-400 uppercase">生產日期</div>
                                             <input type="date" className="col-span-2 w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.date} onChange={e=>setFormData({...formData, date:e.target.value})} />
-                                            <div className="text-xs font-bold text-slate-400">機台 / 組長</div>
+                                            <div className="text-xs font-bold text-slate-400 uppercase">機台 / 組長</div>
                                             <div className="col-span-2 flex gap-2">
                                                 <select className="flex-1 p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.machine} onChange={e=>setFormData({...formData, machine:e.target.value})}>{config.machines.map(m=><option key={m}>{m}</option>)}</select>
                                                 <select className="flex-1 p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.leader} onChange={e=>setFormData({...formData, leader:e.target.value})}>{config.leaders.map(l=><option key={l}>{l}</option>)}</select>
                                             </div>
                                         </div>
-                                        <div className="text-xs font-bold text-slate-400">產品口味</div>
+                                        <div className="text-xs font-bold text-slate-400 uppercase">產品口味</div>
                                         <select className="w-full p-2.5 bg-slate-50 border rounded-xl font-bold" value={formData.flavor} onChange={e=>setFormData({...formData, flavor:e.target.value})}>{config.flavors.map(f=><option key={f}>{f}</option>)}</select>
                                         <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white">
-                                            <div><label className="text-[10px] opacity-50">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.startTime} onChange={e=>setFormData({...formData, startTime:e.target.value})} /></div>
-                                            <div><label className="text-[10px] opacity-50">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.endTime} onChange={e=>setFormData({...formData, endTime:e.target.value})} /></div>
+                                            <div><label className="text-[10px] opacity-50 block mb-1">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.startTime} onChange={e=>setFormData({...formData, startTime:e.target.value})} /></div>
+                                            <div><label className="text-[10px] opacity-50 block mb-1">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold" value={formData.endTime} onChange={e=>setFormData({...formData, endTime:e.target.value})} /></div>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold text-slate-400">
+                                        <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold text-slate-400 uppercase">
                                             <div>人數<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-slate-900 text-center" value={formData.staffCount} onChange={e=>setFormData({...formData, staffCount:Number(e.target.value)})} /></div>
                                             <div>前置<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-slate-900 text-center" value={formData.prepTime} onChange={e=>setFormData({...formData, prepTime:Number(e.target.value)})} /></div>
                                             <div>產量<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-slate-900 text-center" value={formData.totalUnits} onChange={e=>setFormData({...formData, totalUnits:Number(e.target.value)})} /></div>
@@ -245,12 +267,12 @@
                                     </form>
                                 </div>
                                 <div className="lg:col-span-7 space-y-3">
-                                    <h2 className="font-black text-slate-700 italic">RECENT LOGS ({records.length})</h2>
+                                    <h2 className="font-black text-slate-700 italic uppercase">Recent Logs ({records.length})</h2>
                                     <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar text-sm">
                                         {records.map(r => (
                                             <div key={r.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between group shadow-sm">
                                                 <div className="flex items-center gap-4">
-                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${r.upph>=300?'bg-emerald-500 text-white':'bg-rose-500 text-white'}`}>
+                                                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black ${r.upph>=300?'bg-emerald-500 text-white shadow-lg':'bg-rose-500 text-white shadow-lg'}`}>
                                                         <span className="text-base">{r.upph}</span>
                                                         <span className="text-[7px] uppercase font-bold">UPPH</span>
                                                     </div>
@@ -268,43 +290,50 @@
                         )}
 
                         {activeTab === 'dashboard' && (
-                            <div className="space-y-8">
+                            <div className="space-y-8 animate-in fade-in duration-500">
                                 <div className="bg-white p-6 rounded-3xl border flex flex-col md:flex-row justify-between items-center gap-6 shadow-sm">
                                     <div className="flex gap-4">
-                                        <select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.machine} onChange={e=>setDashboardFilter({...dashboardFilter, machine:e.target.value})}><option>全部</option>{config.machines.map(m=><option key={m}>{m}</option>)}</select>
-                                        <select className="bg-slate-100 p-2 rounded-lg font-bold text-sm" value={dashboardFilter.leader} onChange={e=>setDashboardFilter({...dashboardFilter, leader:e.target.value})}><option>全部</option>{config.leaders.map(l=><option key={l}>{l}</option>)}</select>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">機台</span>
+                                            <select className="bg-slate-100 p-2 rounded-lg font-bold text-sm outline-none" value={dashboardFilter.machine} onChange={e=>setDashboardFilter({...dashboardFilter, machine:e.target.value})}><option>全部</option>{config.machines.map(m=><option key={m}>{m}</option>)}</select>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">組長</span>
+                                            <select className="bg-slate-100 p-2 rounded-lg font-bold text-sm outline-none" value={dashboardFilter.leader} onChange={e=>setDashboardFilter({...dashboardFilter, leader:e.target.value})}><option>全部</option>{config.leaders.map(l=><option key={l}>{l}</option>)}</select>
+                                        </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">當前平均人均產值</div>
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">平均人均產值</div>
                                         <div className={`text-4xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg} <span className="text-xs font-normal opacity-50">UPPH</span></div>
                                     </div>
                                 </div>
                                 <div className="bg-white p-8 rounded-3xl border h-80 shadow-sm">
+                                    <h3 className="font-black text-slate-400 text-[9px] uppercase tracking-widest mb-4">Productivity Trend Line</h3>
                                     <ResponsiveContainer width="100%" height="100%">
                                         <AreaChart data={stats.trend}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                             <XAxis dataKey="date" fontSize={10} axisLine={false} tickLine={false} />
                                             <YAxis fontSize={10} axisLine={false} tickLine={false} />
                                             <Tooltip />
-                                            <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" />
+                                            <ReferenceLine y={300} stroke="#fb7185" strokeDasharray="5 5" label={{value:'目標', position:'right', fill:'#fb7185', fontSize:10}} />
                                             <Area type="monotone" dataKey="avg" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={3} />
                                         </AreaChart>
                                     </ResponsiveContainer>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    <div className="bg-white p-6 rounded-3xl border">
-                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Flavor Ranking</h3>
+                                    <div className="bg-white p-8 rounded-3xl border shadow-sm">
+                                        <h3 className="font-black text-slate-400 text-[9px] uppercase tracking-widest mb-6 text-center">Flavor Ranking</h3>
                                         <div className="space-y-4">
                                             {stats.flavor.map(f => (
                                                 <div key={f.name}>
-                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.avg}</span></div>
-                                                    <div className="h-1 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${f.avg>=300?'bg-emerald-500':'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.avg/450)*100)}%` }}></div></div>
+                                                    <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.avg} UPPH</span></div>
+                                                    <div className="h-1 bg-slate-50 rounded-full overflow-hidden border"><div className={`h-full ${f.avg>=300?'bg-emerald-500':'bg-rose-500'}`} style={{ width: `${Math.min(100, (f.avg/450)*100)}%` }}></div></div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
-                                    <div className="bg-white p-6 rounded-3xl border h-64">
-                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Leader Ranking</h3>
+                                    <div className="bg-white p-8 rounded-3xl border shadow-sm h-64">
+                                        <h3 className="font-black text-slate-400 text-[9px] uppercase tracking-widest mb-6 text-center">Leader Ranking</h3>
                                         <ResponsiveContainer width="100%" height="100%">
                                             <BarChart data={stats.leader}>
                                                 <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
@@ -324,10 +353,10 @@
                                     <div key={type} className="bg-white p-6 rounded-3xl border shadow-sm h-fit">
                                         <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest">{type==='machines'?'機台名單':type==='leaders'?'組長名單':'產品口味'}</h3>
                                         <div className="flex gap-2 mb-4">
-                                            <input type="text" id={`in-${type}`} className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm" placeholder="輸入名稱..." />
+                                            <input type="text" id={`in-${type}`} className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm outline-none focus:ring-1 focus:ring-indigo-500" placeholder="輸入名稱..." />
                                             <button onClick={() => {
                                                 const el = document.getElementById(`in-${type}`);
-                                                if(el.value) {
+                                                if(el && el.value) {
                                                     const newC = { ...config, [type]: [...config[type], el.value.trim()] };
                                                     firebase.firestore().doc(`artifacts/packaging-productivity-app/public/data/system_config`).set(newC);
                                                     el.value = '';
@@ -336,12 +365,12 @@
                                         </div>
                                         <div className="space-y-2 h-64 overflow-y-auto custom-scrollbar">
                                             {config[type].map(item => (
-                                                <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-xs font-bold">
+                                                <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-xs font-bold border border-slate-100">
                                                     <span>{item}</span>
                                                     <button onClick={() => {
                                                         const newC = { ...config, [type]: config[type].filter(i=>i!==item) };
                                                         firebase.firestore().doc(`artifacts/packaging-productivity-app/public/data/system_config`).set(newC);
-                                                    }} className="text-rose-400 font-black">×</button>
+                                                    }} className="text-rose-400 font-black px-2">×</button>
                                                 </div>
                                             ))}
                                         </div>
@@ -354,13 +383,19 @@
             );
         };
 
-        // 啟動渲染
-        try {
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(<App />);
-        } catch (e) {
-            document.getElementById('error-display').innerText = "React 渲染失敗: " + e.message;
-        }
+        // 啟動與渲染 (確保 DOM 準備好)
+        window.addEventListener('load', () => {
+            try {
+                const rootElement = document.getElementById('root');
+                if (rootElement) {
+                    const root = ReactDOM.createRoot(rootElement);
+                    root.render(<App />);
+                }
+            } catch (e) {
+                const errDisp = document.getElementById('error-display');
+                if(errDisp) errDisp.innerText = "React 啟動嚴重失敗: " + e.message;
+            }
+        });
     </script>
 </body>
 </html>
