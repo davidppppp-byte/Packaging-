@@ -79,6 +79,11 @@
         };
 
         const App = () => {
+            const { 
+                BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+                AreaChart, Area, ReferenceLine, Cell, LabelList 
+            } = window.Recharts || {};
+
             const [activeTab, setActiveTab] = useState('record');
             const [records, setRecords] = useState([]);
             const [config, setConfig] = useState({
@@ -143,7 +148,6 @@
                 const totalMin = (dur + Number(form.prep)) * form.count;
                 const upph = totalMin > 0 ? Math.round((form.total / totalMin) * 60) : 0;
 
-                // 自動帶入類別
                 const productInfo = config.products.find(p => p.name === form.flavor);
                 const category = productInfo ? productInfo.category : '未分類';
 
@@ -178,7 +182,6 @@
                     leadMap[l].sum += (Number(r.upph) || 0); leadMap[l].count++;
                 });
 
-                // 計算當前選擇產品的標準 UPPH (作為報表紅線)
                 let targetLine = 300;
                 if (filter.flavor !== '全部') {
                     const prod = config.products.find(p => p.name === filter.flavor);
@@ -195,7 +198,6 @@
                 };
             }, [records, filter, config.products]);
 
-            // 輔助函式：點擊選取輸入內容 (解決無法按刪除的問題)
             const handleFocus = (e) => e.target.select();
 
             return (
@@ -332,7 +334,6 @@
                                                     <Tooltip cursor={{fill: '#f8fafc'}} />
                                                     <Bar dataKey="upph" radius={[6, 6, 0, 0]} barSize={30}>
                                                         {stats.leads.map((e, i) => <Cell key={i} fill={e.upph>=300?'#6366f1':'#fb7185'} />)}
-                                                        {/* 修正：顯示柱狀圖上的數字 */}
                                                         <LabelList dataKey="upph" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#64748b' }} />
                                                     </Bar>
                                                 </BarChart>
@@ -371,39 +372,36 @@
                                 </div>
 
                                 <div className="lg:col-span-8 bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                    <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="package" size={14}/> 產品管理與標準 UPPH</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-6 bg-slate-50 p-4 rounded-2xl border-2 border-dashed">
-                                        <div className="md:col-span-1"><label className="text-[10px] font-bold text-slate-400">產品名稱</label><input id="p-name" className="w-full p-2 rounded-lg border font-bold" placeholder="例: 巧巧酥"/></div>
-                                        <div><label className="text-[10px] font-bold text-slate-400">類別</label><select id="p-cat" className="w-full p-2 rounded-lg border font-bold">{config.categories.map(c=><option key={c}>{c}</option>)}</select></div>
-                                        <div><label className="text-[10px] font-bold text-slate-400">標準 UPPH</label><input id="p-target" type="number" className="w-full p-2 rounded-lg border font-bold" defaultValue="300"/></div>
-                                        <div className="flex items-end"><button onClick={()=>{
-                                            const n = document.getElementById('p-name');
-                                            const c = document.getElementById('p-cat');
-                                            const t = document.getElementById('p-target');
-                                            if(n.value) {
-                                                const newP = { name: n.value, category: c.value, target: Number(t.value) };
-                                                const newC = { ...config, products: [...config.products, newP] };
-                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                                n.value = '';
-                                            }
-                                        }} className="w-full bg-indigo-600 text-white p-2.5 rounded-lg font-bold">新增產品</button></div>
-                                    </div>
-                                    <div className="overflow-x-auto">
+                                    <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="package" size={14}/> 產品管理與編輯 UPPH</h3>
+                                    
+                                    {/* 產品新增表單 */}
+                                    <ProductAddForm 
+                                        categories={config.categories} 
+                                        onAdd={(newProd) => {
+                                            const newC = { ...config, products: [...config.products, newProd] };
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                        }} 
+                                    />
+
+                                    <div className="overflow-x-auto mt-6">
                                         <table className="w-full text-sm text-left">
-                                            <thead><tr className="text-slate-400 border-b"><th className="pb-2">品項名稱</th><th className="pb-2">類別</th><th className="pb-2 text-center">標準 UPPH</th><th className="pb-2 text-right">操作</th></tr></thead>
+                                            <thead><tr className="text-slate-400 border-b text-[10px] uppercase tracking-widest"><th className="pb-2">品項名稱</th><th className="pb-2">類別</th><th className="pb-2 text-center">標準 UPPH</th><th className="pb-2 text-right">操作</th></tr></thead>
                                             <tbody>
                                                 {config.products.map((p, idx) => (
-                                                    <tr key={idx} className="border-b last:border-0">
-                                                        <td className="py-3 font-bold">{p.name}</td>
-                                                        <td><span className="bg-slate-100 px-2 py-0.5 rounded text-xs">{p.category}</span></td>
-                                                        <td className="text-center font-mono font-bold text-indigo-600">{p.target}</td>
-                                                        <td className="text-right">
-                                                            <button onClick={()=>{
-                                                                const newC = { ...config, products: config.products.filter((_, i)=>i!==idx) };
-                                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                                            }} className="text-rose-400 font-bold px-2">×</button>
-                                                        </td>
-                                                    </tr>
+                                                    <ProductRow 
+                                                        key={idx} 
+                                                        product={p} 
+                                                        categories={config.categories}
+                                                        onUpdate={(updatedProd) => {
+                                                            const newProducts = config.products.map((item, i) => i === idx ? updatedProd : item);
+                                                            const newC = { ...config, products: newProducts };
+                                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                                        }}
+                                                        onRemove={() => {
+                                                            const newC = { ...config, products: config.products.filter((_, i)=>i!==idx) };
+                                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+                                                        }}
+                                                    />
                                                 ))}
                                             </tbody>
                                         </table>
@@ -416,12 +414,13 @@
             );
         };
 
-        // 獨立組件：解決輸入法打字中斷問題
-        const SettingsInput = ({ type, onAdd }) => {
+        // --- 獨立組件區：解決重新渲染導致的輸入中斷問題 ---
+
+        const SettingsInput = ({ onAdd }) => {
             const [val, setVal] = useState('');
             return (
                 <div className="flex gap-2 mb-4">
-                    <input type="text" className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold outline-none" placeholder="輸入..." value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{
+                    <input type="text" className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold outline-none" placeholder="輸入名稱..." value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{
                         if(e.key==='Enter' && val) { onAdd(val.trim()); setVal(''); }
                     }} />
                     <button onClick={() => { if(val){ onAdd(val.trim()); setVal(''); } }} className="bg-indigo-600 text-white w-8 h-8 rounded-lg font-bold">+</button>
@@ -432,13 +431,73 @@
         const ListDisplay = ({ items, onRemove }) => (
             <div className="space-y-2 h-40 overflow-y-auto pr-1 custom-scrollbar text-sm font-bold text-slate-700">
                 {items.map(item => (
-                    <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl border border-slate-100">
+                    <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl border border-slate-100 group">
                         <span>{item}</span>
-                        <button onClick={() => onRemove(item)} className="text-rose-400 px-2">×</button>
+                        <button onClick={() => onRemove(item)} className="text-rose-400 px-2 opacity-0 group-hover:opacity-100 transition-all font-black">×</button>
                     </div>
                 ))}
             </div>
         );
+
+        const ProductAddForm = ({ categories, onAdd }) => {
+            const [name, setName] = useState('');
+            const [cat, setCat] = useState(categories[0]);
+            const [target, setTarget] = useState(300);
+
+            const submit = () => {
+                if(!name.trim()) return;
+                onAdd({ name: name.trim(), category: cat, target: Number(target) });
+                setName('');
+            };
+
+            return (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2 bg-indigo-50/50 p-4 rounded-2xl border-2 border-dashed border-indigo-100">
+                    <div className="md:col-span-1"><label className="text-[10px] font-bold text-slate-400 block mb-1">產品名稱</label><input className="w-full p-2 rounded-lg border font-bold text-sm" value={name} onChange={e=>setName(e.target.value)} placeholder="例: 巧巧酥"/></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">類別</label><select className="w-full p-2 rounded-lg border font-bold text-sm" value={cat} onChange={e=>setCat(e.target.value)}>{categories.map(c=><option key={c}>{c}</option>)}</select></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">標準 UPPH</label><input type="number" className="w-full p-2 rounded-lg border font-bold text-sm" value={target} onChange={e=>setTarget(e.target.value)}/></div>
+                    <div className="flex items-end"><button onClick={submit} className="w-full bg-indigo-600 text-white p-2.5 rounded-lg font-bold text-sm hover:bg-indigo-700 shadow-md">新增產品</button></div>
+                </div>
+            );
+        };
+
+        const ProductRow = ({ product, categories, onUpdate, onRemove }) => {
+            // 使用本地狀態讓編輯更流暢，不被雲端同步打斷
+            const [isEditing, setIsEditing] = useState(false);
+            const [editData, setEditData] = useState({...product});
+
+            const save = () => {
+                onUpdate(editData);
+                setIsEditing(false);
+            };
+
+            if (isEditing) {
+                return (
+                    <tr className="border-b bg-indigo-50/30">
+                        <td className="py-2 pr-2"><input className="w-full p-1 border rounded text-sm font-bold" value={editData.name} onChange={e=>setEditData({...editData, name:e.target.value})}/></td>
+                        <td className="py-2 pr-2"><select className="w-full p-1 border rounded text-xs font-bold" value={editData.category} onChange={e=>setEditData({...editData, category:e.target.value})}>{categories.map(c=><option key={c}>{c}</option>)}</select></td>
+                        <td className="py-2 text-center pr-2"><input type="number" className="w-20 p-1 border rounded text-center font-bold text-indigo-600 text-sm" value={editData.target} onChange={e=>setEditData({...editData, target:Number(e.target.value)})}/></td>
+                        <td className="py-2 text-right flex justify-end gap-1">
+                            <button onClick={save} className="bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">儲存</button>
+                            <button onClick={()=>setIsEditing(false)} className="bg-slate-300 text-white px-2 py-1 rounded text-[10px] font-bold">取消</button>
+                        </td>
+                    </tr>
+                );
+            }
+
+            return (
+                <tr className="border-b last:border-0 hover:bg-slate-50 transition-colors group">
+                    <td className="py-3 font-bold text-slate-700">{product.name}</td>
+                    <td><span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-500 uppercase">{product.category}</span></td>
+                    <td className="text-center font-mono font-black text-indigo-600">{product.target}</td>
+                    <td className="text-right">
+                        <div className="flex justify-end items-center gap-2">
+                            <button onClick={()=>setIsEditing(true)} className="text-indigo-400 hover:text-indigo-600 text-[10px] font-bold opacity-0 group-hover:opacity-100 underline">編輯</button>
+                            <button onClick={onRemove} className="text-rose-400 font-bold px-2 text-lg">×</button>
+                        </div>
+                    </td>
+                </tr>
+            );
+        };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
