@@ -36,12 +36,17 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .error-message {
+            color: #f87171; background: #450a0a; padding: 12px; border-radius: 8px;
+            margin-top: 15px; font-size: 12px; max-width: 80%; text-align: center;
+        }
     </style>
 </head>
 <body>
     <div id="system-loader">
         <div class="spinner"></div>
         <p id="loader-msg" style="margin-top: 1.5rem; font-weight: bold; color: #a5b4fc;">正在安全同步雲端資料...</p>
+        <div id="error-container"></div>
     </div>
 
     <div id="root"></div>
@@ -53,6 +58,7 @@
             AreaChart, Area, ReferenceLine, Cell, LabelList 
         } = window.Recharts || {};
 
+        // Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyAOkwgZMyKE5DRxoVw22eseT8VbsCeX3eE",
             authDomain: "packaging-7427b.firebaseapp.com",
@@ -67,7 +73,8 @@
                 chart: "M18 20V10M12 20V4M6 20v-6",
                 settings: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.72V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.72V4a2 2 0 0 0-2-2z",
                 plus: "M12 5v14M5 12h14",
-                package: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                package: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+                info: "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             };
             return (
                 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline-block'}}>
@@ -78,20 +85,14 @@
         };
 
         const App = () => {
-            const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine, Cell, LabelList } = window.Recharts || {};
+            const [user, setUser] = useState(null);
             const [activeTab, setActiveTab] = useState('record');
             const [records, setRecords] = useState([]);
-            
-            // 核心修正：加入 loading 旗標確保兩邊資料都到齊
+            const [config, setConfig] = useState({
+                machines: [], leaders: [], products: [], categories: ['塑膠內襯', '鐵盒類', '大餅類']
+            });
             const [configLoaded, setConfigLoaded] = useState(false);
             const [recordsLoaded, setRecordsLoaded] = useState(false);
-
-            const [config, setConfig] = useState({
-                machines: [],
-                leaders: [],
-                products: [],
-                categories: ['塑膠內襯', '鐵盒類', '大餅類']
-            });
 
             const [filter, setFilter] = useState({ machine: '全部', leader: '全部', category: '全部', flavor: '全部' });
             const [form, setForm] = useState({
@@ -99,50 +100,65 @@
                 machine: '', leader: '', flavor: '', count: 3, start: '08:00', end: '12:00', prep: 10, total: 0
             });
 
+            // 確保路徑完全固定，避免消失
             const appId = "packaging-productivity-app";
             const initialFormSet = useRef(false);
 
+            // 1. 初始化 Firebase 認證
             useEffect(() => {
-                try {
-                    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-                    const db = firebase.firestore();
+                const initAuth = async () => {
+                    try {
+                        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                        const auth = firebase.auth();
+                        const db = firebase.firestore();
+                        // 解決網路連線逾時問題
+                        db.settings({ experimentalForceLongPolling: true });
 
-                    firebase.auth().signInAnonymously().then(() => {
-                        const configPath = `artifacts/${appId}/public/data/configs/system`;
-                        const recordsPath = `artifacts/${appId}/public/data/production_records`;
-
-                        // 監聽後台設定 (強化穩定性)
-                        db.doc(configPath).onSnapshot(doc => {
-                            if (doc.exists) {
-                                const data = doc.data();
-                                setConfig({
-                                    machines: data.machines || [],
-                                    leaders: data.leaders || [],
-                                    products: data.products || [],
-                                    categories: data.categories || ['塑膠內襯', '鐵盒類', '大餅類']
-                                });
-                                setConfigLoaded(true);
-                            } else {
-                                // 若真的沒資料，初始化一份空的
-                                const initial = { machines: ['凱炫機'], leaders: ['組長A'], products: [], categories: ['塑膠內襯', '鐵盒類', '大餅類'] };
-                                db.doc(configPath).set(initial).then(() => {
-                                    setConfig(initial);
-                                    setConfigLoaded(true);
-                                });
-                            }
-                        });
-
-                        // 監聽歷史紀錄
-                        db.collection(recordsPath).onSnapshot(snap => {
-                            const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                            setRecords(data.sort((a,b) => (b.date + (b.createdAt || "")).localeCompare(a.date + (a.createdAt || ""))));
-                            setRecordsLoaded(true);
-                        });
-                    });
-                } catch (e) { console.error(e); }
+                        await auth.signInAnonymously();
+                        auth.onAuthStateChanged(u => { if (u) setUser(u); });
+                    } catch (e) {
+                        console.error("Auth Error:", e);
+                    }
+                };
+                initAuth();
             }, []);
 
-            // 只有當兩者都載入完成時才隱藏載入畫面
+            // 2. 認證成功後讀取資料
+            useEffect(() => {
+                if (!user) return;
+                
+                const db = firebase.firestore();
+                // 修正路徑為標準 6 段結構，確保雲端能正確辨識文件
+                const configPath = `artifacts/${appId}/public/data/configs/system_v2`;
+                const recordsPath = `artifacts/${appId}/public/data/production_records`;
+
+                // 讀取設定 (絕對不執行自動寫入 set，防止空資料覆蓋雲端)
+                const unsubConfig = db.doc(configPath).onSnapshot(doc => {
+                    if (doc.exists) {
+                        setConfig(doc.data());
+                    } else {
+                        console.log("雲端資料庫目前為空，請手動新增設定");
+                    }
+                    setConfigLoaded(true);
+                }, err => {
+                    console.error("Config Error:", err);
+                    setConfigLoaded(true);
+                });
+
+                // 讀取紀錄
+                const unsubRecords = db.collection(recordsPath).onSnapshot(snap => {
+                    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setRecords(data.sort((a,b) => (b.date + (b.createdAt || "")).localeCompare(a.date + (a.createdAt || ""))));
+                    setRecordsLoaded(true);
+                }, err => {
+                    console.error("Records Error:", err);
+                    setRecordsLoaded(true);
+                });
+
+                return () => { unsubConfig(); unsubRecords(); };
+            }, [user]);
+
+            // 載入完成後隱藏 Loader
             useEffect(() => {
                 if (configLoaded && recordsLoaded) {
                     const loader = document.getElementById('system-loader');
@@ -153,9 +169,9 @@
                 }
             }, [configLoaded, recordsLoaded]);
 
-            // 表單預設值 (只在第一次載入完成且有選單時執行一次)
+            // 表單預設值
             useEffect(() => {
-                if (configLoaded && config.machines.length > 0 && !initialFormSet.current) {
+                if (configLoaded && config.machines?.length > 0 && !initialFormSet.current) {
                     setForm(f => ({
                         ...f,
                         machine: config.machines[0],
@@ -168,7 +184,7 @@
 
             const handleSave = async (e) => {
                 e.preventDefault();
-                if(form.total <= 0) return;
+                if (!user || form.total <= 0) return;
                 const [h1, m1] = form.start.split(':').map(Number);
                 const [h2, m2] = form.end.split(':').map(Number);
                 let dur = (h2 * 60 + m2) - (h1 * 60 + m1);
@@ -184,7 +200,7 @@
                         ...form, duration: dur, upph, category, createdAt: new Date().toISOString()
                     });
                     setForm(f => ({ ...f, total: 0 }));
-                    alert("✅ 紀錄成功！");
+                    alert("✅ 紀錄儲存成功！");
                 } catch (err) { alert("儲存失敗：" + err.message); }
             };
 
@@ -243,34 +259,34 @@
                     <div className="max-w-7xl mx-auto p-4 md:p-8">
                         {activeTab === 'record' && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
-                                <div className="lg:col-span-4 bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                    <h2 className="font-bold text-indigo-600 mb-6 flex items-center gap-2 tracking-widest text-sm uppercase"><Icon name="plus" /> New Entry</h2>
+                                <div className="lg:col-span-4 bg-white p-6 rounded-3xl border shadow-sm h-fit text-sm">
+                                    <h2 className="font-bold text-indigo-600 mb-6 flex items-center gap-2 tracking-widest uppercase text-sm"><Icon name="plus" /> New Entry</h2>
                                     <form onSubmit={handleSave} className="space-y-4">
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">生產日期</label><input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-lg" value={form.date} onChange={e=>setForm({...form, date:e.target.value})}/></div>
+                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">生產日期</label><input type="date" className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-lg" value={form.date} onChange={e=>setForm({...form, date:e.target.value})}/></div>
                                         <div className="grid grid-cols-2 gap-2">
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">機台</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.machine} onChange={e=>setForm({...form, machine:e.target.value})}>{config.machines.map(m=><option key={m} value={m}>{m}</option>)}</select></div>
-                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">組長</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.leader} onChange={e=>setForm({...form, leader:e.target.value})}>{config.leaders.map(l=><option key={l} value={l}>{l}</option>)}</select></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">機台</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.machine} onChange={e=>setForm({...form, machine:e.target.value})}>{config.machines.map(m=><option key={m} value={m}>{m}</option>)}</select></div>
+                                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">組長</label><select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.leader} onChange={e=>setForm({...form, leader:e.target.value})}>{config.leaders.map(l=><option key={l} value={l}>{l}</option>)}</select></div>
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">品項口味</label>
+                                            <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">品項口味</label>
                                             <select className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-sm" value={form.flavor} onChange={e=>setForm({...form, flavor:e.target.value})}>
-                                                {config.products.map(p=><option key={p.name} value={p.name}>{p.name} ({p.category})</option>)}
+                                                {config.products.length > 0 ? config.products.map(p=><option key={p.name} value={p.name}>{p.name} ({p.category})</option>) : <option>載入中...</option>}
                                             </select>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white shadow-inner">
-                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter uppercase">開始</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.start} onChange={e=>setForm({...form, start:e.target.value})}/></div>
-                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter uppercase">結束</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.end} onChange={e=>setForm({...form, end:e.target.value})}/></div>
+                                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 rounded-2xl text-white shadow-inner font-bold">
+                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter uppercase">開始時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.start} onChange={e=>setForm({...form, start:e.target.value})}/></div>
+                                            <div><label className="text-[10px] opacity-40 block mb-1 tracking-tighter uppercase">結束時間</label><input type="time" className="w-full bg-transparent border-b border-slate-700 font-bold text-xl outline-none" value={form.end} onChange={e=>setForm({...form, end:e.target.value})}/></div>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold text-slate-400 uppercase">
-                                            <div>人數<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900" value={form.count} onFocus={handleFocus} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
-                                            <div>前置<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900" value={form.prep} onFocus={handleFocus} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
-                                            <div>產量<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900" value={form.total} onFocus={handleFocus} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
+                                        <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                            <div>人數<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900 text-lg outline-none" value={form.count} onFocus={handleFocus} onChange={e=>setForm({...form, count:Number(e.target.value)})}/></div>
+                                            <div>前置<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900 text-lg outline-none" value={form.prep} onFocus={handleFocus} onChange={e=>setForm({...form, prep:Number(e.target.value)})}/></div>
+                                            <div>產量<input type="number" className="w-full p-2 bg-slate-50 border rounded-xl font-bold text-center text-slate-900 text-lg outline-none" value={form.total} onFocus={handleFocus} onChange={e=>setForm({...form, total:Number(e.target.value)})}/></div>
                                         </div>
                                         <button type="submit" className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-all hover:bg-indigo-700 uppercase tracking-widest">儲存生產數據</button>
                                     </form>
                                 </div>
                                 <div className="lg:col-span-8 space-y-4">
-                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic underline decoration-indigo-500 underline-offset-8">Production Logs</h2>
+                                    <h2 className="font-bold text-slate-400 text-xs uppercase tracking-widest italic underline underline-offset-8 decoration-indigo-500">Production Logs</h2>
                                     <div className="space-y-2 max-h-[650px] overflow-y-auto pr-2 custom-scrollbar">
                                         {records.map(r => (
                                             <div key={r.id} className="bg-white p-4 rounded-2xl border flex items-center justify-between group shadow-sm hover:border-indigo-300 transition-all">
@@ -280,11 +296,11 @@
                                                         <span className="text-[7px] uppercase font-bold">UPPH</span>
                                                     </div>
                                                     <div>
-                                                        <div className="font-bold text-slate-800 uppercase">{r.machine} <span className="text-slate-300 mx-1">/</span> {r.flavor} <span className="ml-2 text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500">{r.category}</span></div>
+                                                        <div className="font-bold text-slate-800 uppercase tracking-tight">{r.machine} <span className="text-slate-300 mx-1">/</span> {r.flavor} <span className="ml-2 text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-bold">{r.category}</span></div>
                                                         <div className="text-[10px] text-slate-400 font-bold uppercase">{r.date} · <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{r.leader}</span> · {r.count}人 · {r.duration}分</div>
                                                     </div>
                                                 </div>
-                                                <button onClick={()=>firebase.firestore().doc(`artifacts/${appId}/public/data/production_records/${r.id}`).delete()} className="text-rose-400 font-bold text-[10px] px-3 opacity-0 group-hover:opacity-100 transition-all uppercase border border-rose-100 rounded-lg py-1">Delete</button>
+                                                <button onClick={()=>firebase.firestore().doc(`artifacts/${appId}/public/data/production_records/${r.id}`).delete()} className="text-rose-400 font-bold text-[10px] px-3 opacity-0 group-hover:opacity-100 transition-all uppercase border border-rose-100 rounded-lg py-1 font-black">Delete</button>
                                             </div>
                                         ))}
                                     </div>
@@ -297,21 +313,21 @@
                                 <div className="bg-white p-6 rounded-3xl border flex flex-col lg:flex-row justify-between items-center gap-6 shadow-sm">
                                     <div className="flex flex-wrap gap-3">
                                         <div className="flex flex-col gap-1">
-                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">類別</span>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">類別篩選</span>
                                             <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.category} onChange={e=>setFilter({...filter, category:e.target.value})}>
                                                 <option value="全部">全部類別</option>
                                                 {config.categories.map(c=><option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
                                         <div className="flex flex-col gap-1 border-l pl-3">
-                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">機台</span>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">機台篩選</span>
                                             <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.machine} onChange={e=>setFilter({...filter, machine:e.target.value})}>
                                                 <option value="全部">全部機台</option>
                                                 {config.machines.map(m=><option key={m} value={m}>{m}</option>)}
                                             </select>
                                         </div>
                                         <div className="flex flex-col gap-1 border-l pl-3">
-                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">組長</span>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">組長篩選</span>
                                             <select className="bg-slate-100 p-2 rounded-xl font-bold text-xs outline-none" value={filter.leader} onChange={e=>setFilter({...filter, leader:e.target.value})}>
                                                 <option value="全部">全部組長</option>
                                                 {config.leaders.map(l=><option key={l} value={l}>{l}</option>)}
@@ -319,13 +335,13 @@
                                         </div>
                                     </div>
                                     <div className="text-right border-l pl-6">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">平均人均小時產值 (UPPH)</div>
-                                        <div className={`text-5xl font-black ${stats.avg>=300?'text-emerald-500':'text-rose-500'}`}>{stats.avg}</div>
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">平均小時產值 (UPPH)</div>
+                                        <div className={`text-5xl font-black ${stats.avg>=stats.targetLine?'text-emerald-500':'text-rose-500'}`}>{stats.avg}</div>
                                     </div>
                                 </div>
 
                                 <div className="bg-white p-8 rounded-3xl border h-80 shadow-sm">
-                                    <h3 className="font-black text-slate-400 text-[10px] mb-4 uppercase tracking-widest italic flex items-center gap-2"><Icon name="chart" size={14}/> Productivity Trend</h3>
+                                    <h3 className="font-black text-slate-400 text-[10px] mb-4 uppercase tracking-widest italic flex items-center gap-2"><Icon name="chart" size={14}/> Productivity Trend Analysis</h3>
                                     <div className="h-64 w-full">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <AreaChart data={stats.trend}>
@@ -342,8 +358,8 @@
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                     <div className="bg-white p-6 rounded-3xl border shadow-sm h-64 overflow-hidden flex flex-col text-sm font-bold">
-                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Flavor Ranking</h3>
-                                        <div className="space-y-4 overflow-y-auto flex-1 pr-2 custom-scrollbar text-slate-700">
+                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center uppercase">Flavor Efficiency</h3>
+                                        <div className="space-y-4 overflow-y-auto flex-1 pr-2 custom-scrollbar text-slate-700 font-bold">
                                             {stats.flavs.map(f => (
                                                 <div key={f.name}>
                                                     <div className="flex justify-between text-[10px] font-black uppercase mb-1"><span>{f.name}</span><span>{f.upph} UPPH</span></div>
@@ -353,7 +369,7 @@
                                         </div>
                                     </div>
                                     <div className="bg-white p-6 rounded-3xl border shadow-sm h-64 text-center">
-                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center">Leader Performance</h3>
+                                        <h3 className="font-black text-slate-400 text-[10px] uppercase mb-6 tracking-widest text-center uppercase">Leader Performance</h3>
                                         <div className="h-48 w-full">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <BarChart data={stats.leads}>
@@ -372,55 +388,66 @@
                         )}
 
                         {activeTab === 'settings' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in slide-in-from-right-4">
-                                <div className="lg:col-span-4 space-y-6">
-                                    <div className="bg-white p-6 rounded-3xl border shadow-sm">
-                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest">機台名單</h3>
-                                        <SettingsInput onAdd={(val)=> {
-                                            const newC = { ...config, machines: [...config.machines, val] };
-                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                        }} />
-                                        <ListDisplay items={config.machines} onRemove={(item)=>{
-                                            const newC = { ...config, machines: config.machines.filter(i=>i!==item) };
-                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                        }} />
+                            <div className="space-y-8 animate-in slide-in-from-right-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                                    <div className="lg:col-span-4 space-y-6 text-sm font-bold">
+                                        <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                                            <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="settings" size={14} /> 機台名單</h3>
+                                            <SettingsInput onAdd={(val)=> {
+                                                const newArr = [...config.machines, val];
+                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, machines: newArr }, { merge: true });
+                                            }} />
+                                            <ListDisplay items={config.machines} onRemove={(item)=>{
+                                                const newArr = config.machines.filter(i=>i!==item);
+                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, machines: newArr }, { merge: true });
+                                            }} />
+                                        </div>
+                                        <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                                            <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="settings" size={14} /> 組長名單</h3>
+                                            <SettingsInput onAdd={(val)=> {
+                                                const newArr = [...config.leaders, val];
+                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, leaders: newArr }, { merge: true });
+                                            }} />
+                                            <ListDisplay items={config.leaders} onRemove={(item)=>{
+                                                const newArr = config.leaders.filter(i=>i!==item);
+                                                firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, leaders: newArr }, { merge: true });
+                                            }} />
+                                        </div>
                                     </div>
-                                    <div className="bg-white p-6 rounded-3xl border shadow-sm">
-                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest">組長名單</h3>
-                                        <SettingsInput onAdd={(val)=> {
-                                            const newC = { ...config, leaders: [...config.leaders, val] };
-                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
+
+                                    <div className="lg:col-span-8 bg-white p-6 rounded-3xl border shadow-sm h-fit">
+                                        <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="package" size={14}/> 產品管理與編輯 UPPH</h3>
+                                        
+                                        <ProductAddForm categories={config.categories} onAdd={(newP) => {
+                                            const newArr = [...config.products, newP];
+                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, products: newArr }, { merge: true });
                                         }} />
-                                        <ListDisplay items={config.leaders} onRemove={(item)=>{
-                                            const newC = { ...config, leaders: config.leaders.filter(i=>i!==item) };
-                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                        }} />
+
+                                        <div className="overflow-x-auto mt-6">
+                                            <table className="w-full text-sm text-left font-bold">
+                                                <thead><tr className="text-slate-400 border-b text-[10px] uppercase tracking-widest font-black"><th className="pb-2">品項名稱</th><th className="pb-2">類別</th><th className="pb-2 text-center">標準 UPPH</th><th className="pb-2 text-right">操作</th></tr></thead>
+                                                <tbody className="text-slate-700">
+                                                    {configLoaded && config.products.length > 0 ? config.products.map((p, idx) => (
+                                                        <ProductRow key={idx} product={p} categories={config.categories} onUpdate={(u) => {
+                                                            const newProducts = config.products.map((item, i) => i === idx ? u : item);
+                                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, products: newProducts }, { merge: true });
+                                                        }} onRemove={() => {
+                                                            const newProducts = config.products.filter((_, i)=>i!==idx);
+                                                            firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system_v2`).set({ ...config, products: newProducts }, { merge: true });
+                                                        }} />
+                                                    )) : <tr><td colSpan="4" className="text-center py-10 text-slate-300 italic font-bold">尚未新增產品，請於上方表單新增。</td></tr>}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 </div>
-
-                                <div className="lg:col-span-8 bg-white p-6 rounded-3xl border shadow-sm h-fit">
-                                    <h3 className="font-black text-slate-700 uppercase mb-4 text-xs tracking-widest flex items-center gap-2"><Icon name="package" size={14}/> 產品管理與編輯 UPPH</h3>
-                                    
-                                    <ProductAddForm categories={config.categories} onAdd={(newP) => {
-                                        const newC = { ...config, products: [...config.products, newP] };
-                                        firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set(newC);
-                                    }} />
-
-                                    <div className="overflow-x-auto mt-6">
-                                        <table className="w-full text-sm text-left">
-                                            <thead><tr className="text-slate-400 border-b text-[10px] uppercase tracking-widest"><th className="pb-2">品項名稱</th><th className="pb-2">類別</th><th className="pb-2 text-center">標準 UPPH</th><th className="pb-2 text-right">操作</th></tr></thead>
-                                            <tbody>
-                                                {config.products.map((p, idx) => (
-                                                    <ProductRow key={idx} product={p} categories={config.categories} onUpdate={(u) => {
-                                                        const newP = config.products.map((item, i) => i === idx ? u : item);
-                                                        firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set({ ...config, products: newP });
-                                                    }} onRemove={() => {
-                                                        const newP = config.products.filter((_, i)=>i!==idx);
-                                                        firebase.firestore().doc(`artifacts/${appId}/public/data/configs/system`).set({ ...config, products: newP });
-                                                    }} />
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                
+                                <div className="bg-slate-100 p-6 rounded-3xl flex items-center gap-4 text-slate-500 border border-slate-200">
+                                    <Icon name="info" size={24} />
+                                    <div>
+                                        <p className="text-xs font-bold uppercase tracking-widest opacity-60">系統連線診斷</p>
+                                        <p className="text-sm font-mono tracking-tighter">當前 App ID: <span className="text-indigo-600 font-bold">{appId}</span></p>
+                                        <p className="text-[10px] opacity-60 mt-1 italic font-bold">※ 路徑已鎖定為 6 段格式 (V2)。若資料消失是因為地址變更，請重新輸入一次，此版本不會再因同步錯誤而蓋掉您的資料。</p>
                                     </div>
                                 </div>
                             </div>
@@ -434,8 +461,8 @@
             const [val, setVal] = useState('');
             return (
                 <div className="flex gap-2 mb-4">
-                    <input type="text" className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold outline-none" placeholder="輸入名稱..." value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==='Enter' && val) {onAdd(val.trim()); setVal('');}}} />
-                    <button onClick={() => { if(val){ onAdd(val.trim()); setVal(''); } }} className="bg-indigo-600 text-white w-8 h-8 rounded-lg font-bold">+</button>
+                    <input type="text" className="flex-1 p-2 bg-slate-50 border rounded-lg text-sm font-bold outline-none focus:ring-1 focus:ring-indigo-500" placeholder="輸入名稱..." value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==='Enter' && val) {onAdd(val.trim()); setVal('');}}} />
+                    <button onClick={() => { if(val){ onAdd(val.trim()); setVal(''); } }} className="bg-indigo-600 text-white w-8 h-8 rounded-lg font-bold hover:bg-indigo-700 transition-colors shadow">+</button>
                 </div>
             );
         };
@@ -443,9 +470,9 @@
         const ListDisplay = ({ items, onRemove }) => (
             <div className="space-y-2 h-40 overflow-y-auto pr-1 custom-scrollbar text-sm font-bold text-slate-700">
                 {items.map(item => (
-                    <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl border border-slate-100 group">
+                    <div key={item} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl border border-slate-100 group hover:border-rose-100 transition-all">
                         <span>{item}</span>
-                        <button onClick={() => onRemove(item)} className="text-rose-400 px-2 opacity-0 group-hover:opacity-100 transition-all font-black text-lg">×</button>
+                        <button onClick={() => onRemove(item)} className="text-rose-400 px-2 opacity-0 group-hover:opacity-100 transition-all font-black text-lg hover:text-rose-600">×</button>
                     </div>
                 ))}
             </div>
@@ -453,14 +480,14 @@
 
         const ProductAddForm = ({ categories, onAdd }) => {
             const [n, setN] = useState('');
-            const [c, setC] = useState(categories[0]);
+            const [c, setC] = useState(categories[0] || '塑膠內襯');
             const [t, setT] = useState(300);
             return (
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2 bg-indigo-50/50 p-4 rounded-2xl border-2 border-dashed border-indigo-100">
-                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">名稱</label><input className="w-full p-2 rounded-lg border font-bold text-sm" value={n} onChange={e=>setN(e.target.value)}/></div>
-                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">類別</label><select className="w-full p-2 rounded-lg border font-bold text-sm" value={c} onChange={e=>setC(e.target.value)}>{categories.map(cat=><option key={cat}>{cat}</option>)}</select></div>
-                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">標準</label><input type="number" className="w-full p-2 rounded-lg border font-bold text-sm" value={t} onChange={e=>setT(Number(e.target.value))}/></div>
-                    <div className="flex items-end"><button onClick={()=>{if(n){onAdd({name:n, category:c, target:t}); setN('');}}} className="w-full bg-indigo-600 text-white p-2.5 rounded-lg font-bold text-sm">新增產品</button></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">產品名稱</label><input className="w-full p-2 rounded-lg border font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" value={n} onChange={e=>setN(e.target.value)} placeholder="品名"/></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">產品類別</label><select className="w-full p-2 rounded-lg border font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" value={c} onChange={e=>setC(e.target.value)}>{categories.map(cat=><option key={cat} value={cat}>{cat}</option>)}</select></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-widest">標準 UPPH</label><input type="number" className="w-full p-2 rounded-lg border font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" value={t} onChange={e=>setT(Number(e.target.value))}/></div>
+                    <div className="flex items-end"><button onClick={()=>{if(n){onAdd({name:n, category:c, target:t}); setN('');}}} className="w-full bg-indigo-600 text-white p-2.5 rounded-lg font-bold text-sm hover:bg-indigo-700 shadow-lg transition-all active:scale-95">新增產品</button></div>
                 </div>
             );
         };
@@ -470,23 +497,25 @@
             const [d, setD] = useState({...product});
             if (isE) return (
                 <tr className="border-b bg-indigo-50/30">
-                    <td><input className="w-full p-1 border rounded font-bold" value={d.name} onChange={e=>setD({...d, name:e.target.value})}/></td>
-                    <td><select className="w-full p-1 border rounded" value={d.category} onChange={e=>setD({...d, category:e.target.value})}>{categories.map(c=><option key={c}>{c}</option>)}</select></td>
-                    <td><input type="number" className="w-full p-1 border rounded text-center" value={d.target} onChange={e=>setD({...d, target:Number(e.target.value)})}/></td>
+                    <td><input className="w-full p-1 border rounded font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" value={d.name} onChange={e=>setD({...d, name:e.target.value})}/></td>
+                    <td><select className="w-full p-1 border rounded text-xs outline-none focus:ring-1 focus:ring-indigo-500" value={d.category} onChange={e=>setD({...d, category:e.target.value})}>{categories.map(c=><option key={c} value={c}>{c}</option>)}</select></td>
+                    <td><input type="number" className="w-full p-1 border rounded text-center font-bold text-sm outline-none focus:ring-1 focus:ring-indigo-500" value={d.target} onChange={e=>setD({...d, target:Number(e.target.value)})}/></td>
                     <td className="text-right flex gap-1 justify-end py-2">
-                        <button onClick={()=>{onUpdate(d); setIsE(false);}} className="bg-emerald-500 text-white px-2 py-1 rounded text-xs">存</button>
-                        <button onClick={()=>setIsE(false)} className="bg-slate-300 text-white px-2 py-1 rounded text-xs">否</button>
+                        <button onClick={()=>{onUpdate(d); setIsE(false);}} className="bg-emerald-500 text-white px-2 py-1 rounded text-xs font-bold shadow hover:bg-emerald-600">存</button>
+                        <button onClick={()=>setIsE(false)} className="bg-slate-300 text-white px-2 py-1 rounded text-xs font-bold shadow hover:bg-slate-400">否</button>
                     </td>
                 </tr>
             );
             return (
-                <tr className="border-b group hover:bg-slate-50">
-                    <td className="py-3 font-bold">{product.name}</td>
-                    <td><span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold">{product.category}</span></td>
+                <tr className="border-b group hover:bg-slate-50 transition-colors">
+                    <td className="py-3 font-bold text-slate-700">{product.name}</td>
+                    <td><span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-black text-slate-500 uppercase">{product.category}</span></td>
                     <td className="text-center font-black text-indigo-600">{product.target}</td>
                     <td className="text-right">
-                        <button onClick={()=>setIsE(true)} className="text-indigo-400 text-xs mr-2 opacity-0 group-hover:opacity-100 transition-all font-bold underline">編輯</button>
-                        <button onClick={onRemove} className="text-rose-400 font-bold px-2 text-lg">×</button>
+                        <div className="flex justify-end items-center">
+                            <button onClick={()=>setIsE(true)} className="text-indigo-400 text-xs mr-2 opacity-0 group-hover:opacity-100 transition-all font-bold underline hover:text-indigo-600">編輯</button>
+                            <button onClick={onRemove} className="text-rose-400 font-bold px-2 text-lg hover:text-rose-600 transition-colors">×</button>
+                        </div>
                     </td>
                 </tr>
             );
